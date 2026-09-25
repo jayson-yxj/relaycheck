@@ -45,7 +45,18 @@ from relaycheck.client import RelayClient  # noqa: E402
 from relaycheck.models import Confidence, Severity  # noqa: E402
 from relaycheck.probes import ALL_PROBES, select_probes  # noqa: E402
 from relaycheck.probes.base import ProbeContext, run_probes  # noqa: E402
+from relaycheck.cli import _make_output_safe  # noqa: E402
 from relaycheck.reporter import Report  # noqa: E402
+
+# The checks below print finding titles, and those titles are Chinese. A Windows
+# console usually runs a legacy code page (the GitHub ``windows-latest`` runner
+# gives cp1252, which cannot represent any CJK glyph), so an unguarded print()
+# raises UnicodeEncodeError *inside the check* and gets reported as a failing
+# test even though every assertion held. cli.main() already guards its own
+# output; when the suite is driven directly, as CI does with
+# ``python tests/test_mock_relay.py``, nothing else has, so the harness opts
+# into the same protection.
+_make_output_safe()
 
 FRAUDULENT_MODELS = ["gpt-4o", "gemini-1.5-pro", "claude-3-5-sonnet", "deepseek-chat"]
 CLEAN_MODELS = ["gpt-4o", "claude-3-5-sonnet", "deepseek-chat"]
