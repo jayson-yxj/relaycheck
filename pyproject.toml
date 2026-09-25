@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "relaycheck"
+version = "0.1.0"
+description = "Audit OpenAI-compatible LLM relay/proxy endpoints for model substitution, billing fraud, and capability degradation."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "relaycheck contributors" }]
+keywords = ["llm", "openai", "relay", "proxy", "audit", "api", "fraud-detection"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Software Development :: Testing",
+]
+dependencies = [
+    "requests>=2.31",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "pytest-cov"]
+
+[project.scripts]
+relaycheck = "relaycheck.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/jayson-yxj/relaycheck"
+Repository = "https://github.com/jayson-yxj/relaycheck"
+Issues = "https://github.com/jayson-yxj/relaycheck/issues"
+Changelog = "https://github.com/jayson-yxj/relaycheck/blob/main/CHANGELOG.md"
+
+[tool.setuptools.packages.find]
+include = ["relaycheck*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

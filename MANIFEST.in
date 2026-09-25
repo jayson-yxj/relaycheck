@@ -1,0 +1,13 @@
+# Ship the self-test inside the sdist.
+#
+# SECURITY.md tells people to reproduce a suspected bug against
+# ``tests/mock_relay.py`` rather than paste a real report. That instruction is
+# only useful if the mock relay is actually in the archive, and setuptools does
+# not pick up tests/ or examples/ on its own.
+include LICENSE
+include README.md
+include README.en.md
+include CHANGELOG.md
+include SECURITY.md
+recursive-include tests *.py
+recursive-include examples *.md

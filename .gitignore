@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.venv/
+venv/
+
+# audit output — per-account billing data for the station under audit.
+# The API key itself never reaches a report (relaycheck/reporter.py has no
+# reference to it), but your balance, spend and usage history do.
+out-*/
+relaycheck-*/
+report.json
+report.md
+*.log
+
+# local scratch
+_lat.py
+_ex-*/
