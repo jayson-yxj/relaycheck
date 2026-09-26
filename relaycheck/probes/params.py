@@ -355,13 +355,34 @@ class ParamsProbe(Probe):
                 "note": "基线回答里没有出现该 stop token，无法判定",
                 "baseline": plain[:160],
             }
-        stopped = ctx.ask(
+        stopped_comp = ctx.ask(
             model,
             [{"role": "user", "content": _STOP_PROMPT}],
             max_tokens=64,
             temperature=0,
             stop=[_STOP_TOKEN],
-        ).content
+        )
+        stopped = stopped_comp.content
+        if not stopped.strip():
+            # ``_STOP_TOKEN not in ""`` is trivially True and ``0 < len(plain)``
+            # is too, so an answer the budget emptied used to read as "stop
+            # honoured" — a pass for a measurement that never happened.
+            #
+            # Only the *empty* case is gated. A short answer is not a reason to
+            # bail: ``_STOP_PROMPT`` asks for five one-digit lines, so the honest
+            # "stop worked" and "stop ignored" answers are both well under 24
+            # characters, and requiring more visible text than that would throw
+            # away the measurement this check exists to make.
+            return {
+                "verdict": "inconclusive",
+                "stop": [_STOP_TOKEN],
+                "baseline_chars": len(plain),
+                "stopped_chars": 0,
+                "note": (
+                    "带 stop 的返回是空的，没有可比较的内容，无法判断 stop 是否生效。"
+                    "常见原因是推理模型把 max_tokens 预算花在了隐藏的 reasoning 上。"
+                ),
+            }
         honoured = _STOP_TOKEN not in stopped and len(stopped) < len(plain)
         return {
             "verdict": "honoured" if honoured else "ignored",
@@ -369,7 +390,16 @@ class ParamsProbe(Probe):
             "baseline_chars": len(plain),
             "stopped_chars": len(stopped),
             "stopped_response": stopped[:160],
-            "note": "带 stop 的返回与不带 stop 完全一致，说明 stop 被静默丢弃",
+            # The note has to describe the branch it is in. It used to say
+            # "the stop answer is identical to the plain one" even when the
+            # verdict was ``honoured``, i.e. the finding contradicted itself.
+            "note": (
+                f"带 stop 的返回在 {_STOP_TOKEN} 处被截断"
+                f"（{len(plain)} → {len(stopped)} 字符）。"
+                if honoured
+                else f"带 stop 的返回与不带 stop 的完全一致（都是 {len(plain)} 字符），"
+                "说明 stop 被静默丢弃。"
+            ),
         }
 
     def _check_temperature(self, ctx: ProbeContext, model: str) -> dict[str, Any]:

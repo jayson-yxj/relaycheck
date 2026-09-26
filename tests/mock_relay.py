@@ -195,6 +195,7 @@ class _State:
         reasoning_tokens: int | None = None,
         panel: bool = True,
         throttle: bool = False,
+        throttle_every: int = 0,
         strip_usage_for: tuple[str, ...] = (),
     ) -> None:
         self.scenario = scenario
@@ -241,6 +242,15 @@ class _State:
         #: pacing, and does not report 「可用性正常」 for a run in which nothing
         #: succeeded either.
         self.throttle = throttle
+        #: ``throttle_every=N`` 429s every Nth chat request and serves the rest,
+        #: which is the shape that exposed ``rel-101``: a run where *some*
+        #: samples were refused still has successes, so a median latency exists
+        #: — and that median describes the queue the endpoint put us in, not the
+        #: endpoint. A healthy endpoint that throttles under a 0.4 s cadence must
+        #: not be reported as 「上游是共享池或直连的不是官方 API」.
+        self.throttle_every = int(throttle_every)
+        #: Per-server POST counter, used by ``throttle_every``.
+        self.request_seq = 0
         #: ``strip_usage_for`` names models whose chat responses come back
         #: without a ``usage`` block, which is what a gateway that speaks
         #: Anthropic-shaped usage — or one that drops usage on streamed
@@ -446,7 +456,12 @@ def _make_handler(state: _State) -> type[BaseHTTPRequestHandler]:
             if not self._authorised():
                 self._send_json(401, {"code": "INVALID_API_KEY", "message": "Invalid API key"})
                 return
-            if state.throttle:
+            # Counted before the throttle branch so a partially-throttled run can
+            # interleave served and 429 answers deterministically.
+            state.request_seq += 1
+            if state.throttle or (
+                state.throttle_every and state.request_seq % state.throttle_every == 0
+            ):
                 # A healthy endpoint under a probe that fires every 0.4 s. The
                 # honest reading is neither 「中转站极不稳定」 nor 「可用性正常」 —
                 # it is "we did not manage to measure this".
@@ -935,6 +950,7 @@ def serve(
     reasoning_tokens: int | None = None,
     panel: bool = True,
     throttle: bool = False,
+    throttle_every: int = 0,
     strip_usage_for: tuple[str, ...] = (),
 ) -> ThreadingHTTPServer:
     """Start the mock relay on ``port``.
@@ -950,6 +966,11 @@ def serve(
     ``throttle=True`` makes every chat request come back 429, which is what an
     official first-party endpoint does when a probe hits it every 0.4 s.
 
+    ``throttle_every=N`` 429s every Nth chat request and serves the rest, so the
+    run still has successes and therefore a median latency — the shape that
+    exposed ``rel-101``, where a throttled run's queue was read as the endpoint's
+    own speed.
+
     ``strip_usage_for=("gpt-4o-mini",)`` drops the ``usage`` block from that
     model's chat responses, which is what a gateway speaking Anthropic-shaped
     usage looks like while running the real model.
@@ -961,6 +982,7 @@ def serve(
         reasoning_tokens=reasoning_tokens,
         panel=panel,
         throttle=throttle,
+        throttle_every=throttle_every,
         strip_usage_for=strip_usage_for,
     )
     return _MockRelayServer(("127.0.0.1", port), _make_handler(state))

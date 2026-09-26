@@ -21,7 +21,7 @@ from typing import Any
 
 from ..client import RelayError
 from ..models import Confidence, ProbeResult, Severity
-from .base import Probe, ProbeContext
+from .base import Probe, ProbeContext, starved_of_visible_text
 
 #: Prompt designed to produce a *short* visible answer, so any large billed
 #: token count cannot be explained by the answer itself.
@@ -65,7 +65,14 @@ class HiddenReasoningProbe(Probe):
 
         for model in models:
             try:
-                comp = ctx.client.chat(
+                # Go through ``ctx.ask``, not ``ctx.client.chat``: a reasoning
+                # backend that spends the whole 512-token budget on hidden
+                # reasoning comes back with an empty ``content`` and
+                # ``finish_reason == "length"``. The grow-retry is what turns
+                # that into a usable sample; calling the client directly skipped
+                # it, so the probe recorded "ok" on a completion it never
+                # actually saw.
+                comp = ctx.ask(
                     model,
                     [{"role": "user", "content": SHORT_ANSWER_PROMPT}],
                     max_tokens=512,
@@ -102,6 +109,15 @@ class HiddenReasoningProbe(Probe):
             record["billed_tokens_per_visible_char"] = (
                 round(ratio, 2) if visible_chars else None
             )
+
+            # Nothing usable came back. Whatever the upstream charged for this
+            # call, this sample cannot speak to it — and recording ``ok`` here
+            # would be exactly the lie this project exists to avoid:
+            # 「没能测量」不是「测量过、正常」.
+            if comp.visible_empty or starved_of_visible_text(comp.content, comp.finish_reason):
+                record["verdict"] = "unmeasurable"
+                observations[model] = record
+                continue
 
             # A model that shows its reasoning is not cheating; it is just verbose.
             if has_visible_reasoning_field:
@@ -144,13 +160,16 @@ class HiddenReasoningProbe(Probe):
                 ),
             )
         else:
-            # Only a model that returned a usable usage block can be cleared.
-            # A failed request has no ratio to judge, so treating it as "no
-            # hidden reasoning" would clear a relay that never answered.
+            # Only a model that returned a usable usage block *and* a usable
+            # visible answer can be cleared. A failed request has no ratio to
+            # judge, and a starved one has a ratio that describes our own
+            # ``max_tokens`` rather than the relay — clearing either would clear
+            # a relay that was never actually measured.
             measured = [
                 o
                 for o in observations.values()
                 if o.get("billed_vs_estimated_ratio") is not None
+                and o.get("verdict") not in ("unmeasurable", "no-usage")
             ]
             if not measured:
                 self._find(
@@ -160,12 +179,15 @@ class HiddenReasoningProbe(Probe):
                     severity=Severity.INFO,
                     confidence=Confidence.CONFIRMED,
                     summary=(
-                        f"{len(models)} 个模型都没有返回可用的 usage，"
+                        f"{len(models)} 个模型都没有返回可用的 usage 与可见回答，"
                         "无法比较 completion_tokens 与可见内容。这一项没有被检验。"
                     ),
                     evidence={"observations": observations},
                 )
             else:
+                unmeasurable = sorted(
+                    m for m, o in observations.items() if o.get("verdict") == "unmeasurable"
+                )
                 self._find(
                     result,
                     id="bill-clean",
@@ -176,9 +198,17 @@ class HiddenReasoningProbe(Probe):
                         f"{len(measured)}/{len(models)} 个模型完成了比对："
                         "短回答下 completion_tokens 与可见内容量级一致，"
                         "未发现思维链被隐藏计费的迹象。"
+                        + (
+                            f"另有 {len(unmeasurable)} 个模型（{', '.join(unmeasurable)}）"
+                            "在请求的 max_tokens 下没吐出足够可见正文，这一项对它们"
+                            "没有被检验。"
+                            if unmeasurable
+                            else ""
+                        )
                     ),
                     evidence={
                         "models_measured": len(measured),
+                        "models_unmeasurable": unmeasurable,
                         "observations": observations,
                     },
                 )

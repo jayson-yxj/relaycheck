@@ -262,7 +262,16 @@ class ReliabilityProbe(Probe):
                     "本次审计报告中标注为「不完整」的项目，都需要在稳定期重跑。"
                 ),
             )
-        elif stats.get("p50_latency_s", 0) > SLOW_P50_S:
+        elif (
+            stats.get("p50_latency_s", 0) > SLOW_P50_S
+            and not (throttled or refused)
+        ):
+            # Only judge speed from requests the endpoint actually served. When
+            # part of the run came back 429/4xx, the queue we were put in is
+            # folded into the median — that number describes the endpoint's
+            # rate limiting, not its latency. Official first-party APIs throttle
+            # under load as a matter of policy, so the naive ordering accused
+            # exactly the honest endpoints this check is supposed to clear.
             self._find(
                 result,
                 id="rel-101",
@@ -287,6 +296,13 @@ class ReliabilityProbe(Probe):
                 parts.append(f"{len(throttled)} 次被限流（429）")
             if refused:
                 parts.append(f"{len(refused)} 次被拒绝（4xx）")
+            p50 = stats.get("p50_latency_s")
+            slow_note = ""
+            if p50 is not None and p50 > SLOW_P50_S:
+                slow_note = (
+                    f"另外中位延迟 {p50:.1f} 秒偏高，但那是在被回绝的条件下量到的，"
+                    "不能拿来判断端点本身快不快。"
+                )
             self._find(
                 result,
                 id="rel-102",
@@ -300,6 +316,7 @@ class ReliabilityProbe(Probe):
                     "4xx 是这一次请求本身被拒（形状不对、key 不对、模型不存在）。"
                     "所以可用性这一项本次**没有结论**，"
                     "换更长的 --delay 或更少的 --reliability-samples 再跑一次。"
+                    + slow_note
                 ),
                 evidence=stats,
             )

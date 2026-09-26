@@ -996,6 +996,175 @@ def test_missing_usage_is_not_an_accusation() -> None:
     )
 
 
+def test_a_starved_billing_sample_is_not_reported_as_clean() -> None:
+    """A billing sample the budget emptied must not be cleared as "checked, fine".
+
+    Two halves of one mistake in ``billing.py``:
+      * the probe called ``ctx.client.chat`` directly, so the grow-retry in
+        ``base.py`` never ran and a reasoning backend's empty answer was taken
+        as the measurement;
+      * an empty answer gives ``billed == 0`` → ``expected == 0`` → the
+        ``expected > 0`` guard fell through to ``verdict = "ok"``, i.e. "measured
+        and normal", on a completion the probe never saw.
+
+    A relay that hides its reasoning behind a budget large enough to survive the
+    retry is exactly the shape this probe exists to catch, so clearing it would
+    clear the one case that matters most.
+    """
+    report = run_audit(
+        "clean",
+        CLEAN_MODELS,
+        probe_names=["billing-hidden-reasoning"],
+        reasoning_tokens=4096,
+    )
+    ids = {f.id for f in report.all_findings}
+    print("\n[starved-billing]", {k: v for k, v in report.counts.items() if v}, sorted(ids))
+
+    assert "bill-clean" not in ids, (
+        "billing 探针一个可见回答都没拿到，却报出「未发现隐藏 reasoning 计费」"
+    )
+    assert "bill-100" not in ids, "没有正文可看，却指控隐藏 reasoning 计费"
+
+    bill000 = [f for f in report.all_findings if f.id == "bill-000"]
+    assert bill000, "这一项没被检验，却也没写出来（bill-000 缺失）"
+    assert bill000[0].severity is Severity.INFO, (
+        f"「测不出来」被报到了 {bill000[0].severity.value}"
+    )
+
+    # The observable half of C4: the per-model verdict used to read ``ok``,
+    # i.e. "measured and normal", directly beside ``billed_vs_estimated_ratio:
+    # None`` — the record contradicted itself.
+    probe = next(r for r in report.results if r.probe == "billing-hidden-reasoning")
+    verdicts = {
+        model: obs.get("verdict")
+        for model, obs in (probe.data.get("observations") or {}).items()
+    }
+    assert set(verdicts.values()) == {"unmeasurable"}, (
+        f"没有可见正文的样本被判成 {verdicts}，而不是「测不出来」"
+    )
+
+
+def test_the_billing_probe_grows_the_budget_before_giving_up() -> None:
+    """The billing probe must reuse ``ctx.ask``, not call the client directly.
+
+    Regression (C5): ``billing.py`` called ``ctx.client.chat`` with a fixed
+    ``max_tokens=512``. A reasoning backend that spends 1500 tokens thinking is
+    starved at 512 but answers fine at 2048 — the grow-retry in ``base.py``
+    covers exactly that gap, and bypassing it threw the sample away. Every other
+    probe already went through ``ctx.ask``.
+    """
+    report = run_audit(
+        "clean",
+        CLEAN_MODELS,
+        probe_names=["billing-hidden-reasoning"],
+        reasoning_tokens=1500,
+    )
+    ids = {f.id for f in report.all_findings}
+    print("\n[grown-billing]", {k: v for k, v in report.counts.items() if v}, sorted(ids))
+
+    assert "bill-000" not in ids, (
+        "reasoning 花掉 1500 tokens：重试到 2048 就能拿到回答，却报了「没能检测」"
+    )
+    assert "bill-clean" in ids, "拿到了可用样本，却没有给出任何结论"
+    assert "bill-100" not in ids, "短回答下正常计费，却被指控隐藏 reasoning"
+
+
+def test_stop_is_not_called_ignored_when_there_is_nothing_to_compare() -> None:
+    """``stop`` may only be judged from a comparison that actually happened.
+
+    Regression: ``_check_stop`` computed
+    ``honoured = _STOP_TOKEN not in stopped and len(stopped) < len(plain)``. An
+    empty answer satisfies both halves for free — the token is trivially absent,
+    and ``0 < len(plain)`` — so a response the budget emptied was recorded as
+    "stop honoured", and ``params-clean`` then cleared a parameter that was
+    never exercised.
+
+    The note was wrong in the other direction as well: it was emitted
+    unconditionally, so the ``honoured`` branch said "stop was silently dropped"
+    — a finding that contradicted its own verdict.
+    """
+    from types import SimpleNamespace
+
+    from relaycheck.probes.params import ParamsProbe
+
+    probe = ParamsProbe()
+    plain_answer = "0 1 2 3 4 5 6 7 8 9"
+
+    def outcome(*answers: str) -> dict:
+        pending = iter(answers)
+
+        class _Ctx:
+            def ask(self, model, messages, **kwargs):  # noqa: ANN001
+                return SimpleNamespace(content=next(pending))
+
+        return probe._check_stop(_Ctx(), "gpt-4o")  # type: ignore[arg-type]
+
+    emptied = outcome(plain_answer, "")
+    assert emptied["verdict"] == "inconclusive", (
+        f"没有返回内容却判成 {emptied['verdict']}，「没测到」被写成了结论"
+    )
+
+    honoured = outcome(plain_answer, "0 1 2 3 4")
+    assert honoured["verdict"] == "honoured", honoured
+    assert "静默丢弃" not in honoured["note"], (
+        "verdict 是 honoured，说明文字却说 stop 被静默丢弃"
+    )
+
+    ignored = outcome(plain_answer, plain_answer)
+    assert ignored["verdict"] == "ignored", ignored
+    assert "静默丢弃" in ignored["note"]
+
+
+def test_a_throttled_run_is_not_reported_as_a_slow_relay() -> None:
+    """A median latency measured while being throttled is not the endpoint's speed.
+
+    Regression (``rel-101``): the verdict chain checked ``p50_latency_s >
+    SLOW_P50_S`` *before* it looked at 429/4xx evidence. A run that is only
+    partly refused still has successes, so a median exists — and that median
+    carries the time the endpoint made us wait in its rate-limit queue. The
+    finding then read 「上游是共享池、排队严重或者被限速，而不是直连官方 API」,
+    which is exactly what an official first-party endpoint looks like under a
+    0.4 s probe cadence.
+
+    ``SLOW_P50_S`` is lowered here so a sub-second mock can stand in for a real
+    queueing delay — the branch ordering is what is under test, not the constant.
+    """
+    import relaycheck.probes.reliability as reliability_mod
+
+    original = reliability_mod.SLOW_P50_S
+    reliability_mod.SLOW_P50_S = -1.0
+    try:
+        report = run_audit(
+            "clean",
+            CLEAN_MODELS,
+            probe_names=["reliability"],
+            options={"reliability_samples": 6},
+            throttle_every=2,
+        )
+    finally:
+        reliability_mod.SLOW_P50_S = original
+
+    ids = {f.id for f in report.all_findings}
+    probe = next(r for r in report.results if r.probe == "reliability")
+    stats = probe.data.get("reliability") or probe.data
+    print("\n[throttled-slow]", {k: v for k, v in report.counts.items() if v}, sorted(ids), stats)
+
+    assert stats.get("throttled"), (
+        f"测试前提不成立：这一轮没有被限流的样本，stats={stats}"
+    )
+    assert stats.get("succeeded"), "测试前提不成立：这一轮一次都没成功，没有延迟中位数可谈"
+    assert "rel-101" not in ids, (
+        "一半样本被 429 回绝，仍把混了排队时间的中位延迟当成端点自己的速度去指控"
+    )
+    assert "rel-102" in ids, "被限流这件事没有照实记下来"
+    accusatory = [
+        f for f in report.all_findings if f.severity not in (Severity.CLEAN, Severity.INFO)
+    ]
+    assert not accusatory, "被限流的诚实端点被误报：" + ", ".join(
+        f"{f.id}({f.severity.value})" for f in accusatory
+    )
+
+
 def _main() -> int:
     checks = [
         test_model_autodiscovery_runs_without_models_flag,
@@ -1006,10 +1175,14 @@ def _main() -> int:
         test_twins_prompts_are_open_ended,
         test_endpoint_without_a_billing_panel_is_never_reported_as_clean,
         test_rate_limiting_is_not_reported_as_an_unstable_relay,
+        test_a_throttled_run_is_not_reported_as_a_slow_relay,
         test_slow_relay_does_not_hang_the_audit,
         test_same_vendor_aliases_are_not_accused,
         test_same_vendor_aliases_survive_without_tokenizer_data,
         test_missing_usage_is_not_an_accusation,
+        test_a_starved_billing_sample_is_not_reported_as_clean,
+        test_the_billing_probe_grows_the_budget_before_giving_up,
+        test_stop_is_not_called_ignored_when_there_is_nothing_to_compare,
         test_dead_relay_is_never_reported_as_clean,
         test_context_probe_catches_silent_truncation,
         test_a_refusal_to_list_a_marker_is_not_a_truncated_prefix,
