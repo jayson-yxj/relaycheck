@@ -102,6 +102,87 @@ _SEVERITY_CHIPS: tuple[tuple[str, str], ...] = (
     ("clean", "CLEAN"),
 )
 
+#: ``(底色, 字色)`` for a severity chip **whose count is not zero**. A chip that
+#: reads zero is deliberately left unfilled and greyed instead: ``CRITICAL=0`` on a
+#: solid red badge is an alarm, and on a clean run it is the exact opposite of what
+#: the report says. Filled means "this happened"; grey means "this did not".
+_SEVERITY_FILL: dict[str, tuple[str, str]] = {
+    "critical": ("#b91c1c", "#ffffff"),
+    "high": ("#c2410c", "#ffffff"),
+    "medium": ("#a16207", "#ffffff"),
+    "low": ("#4d7c0f", "#ffffff"),
+    "info": ("#475569", "#ffffff"),
+    "clean": ("#15803d", "#ffffff"),
+}
+
+#: Grey for a zero-count chip. Every card background is light (see
+#: ``VERDICT_STYLE``), so one mid-dark grey stays legible on all of them and reads
+#: as inactive next to a white-on-colour filled chip.
+_SEVERITY_EMPTY_FG = "#78716c"
+
+#: Vendor → colour. Colouring the *self-reported* family is the whole point of the
+#: tinting: two models that both answer "I was created by OpenAI" light up the same
+#: colour, which is what makes the stock-boilerplate tell visible at a glance
+#: instead of something the reader has to notice by reading every line.
+#:
+#: This is identity grouping, **not** guilt. A tint says "these two claims are the
+#: same claim", never "this model is a fake". The card's own caption still carries
+#: the caveat, because colour is exactly where a lead gets mistaken for a verdict.
+_FAMILY_COLORS: dict[str, str] = {
+    "openai": "#0f766e",
+    "anthropic": "#7c3aed",
+    "deepseek": "#1d4ed8",
+    "google": "#b45309",
+    "meta": "#0369a1",
+    "mistral": "#c2410c",
+    "minimax": "#be123c",
+    "qwen": "#4d7c0f",
+    "zhipu": "#a21caf",
+    "moonshot": "#0e7490",
+    "xai": "#374151",
+    "cohere": "#9333ea",
+    "amazon": "#a16207",
+    "microsoft": "#1e40af",
+    "nvidia": "#15803d",
+}
+
+#: Used for a family this build has never heard of, so a new vendor still gets a
+#: stable tint instead of no tint. Picked by a deterministic hash, never by
+#: ``hash()`` — that is salted per process, and the same report would then come out
+#: in different colours on every run.
+_FAMILY_FALLBACK = ("#0f766e", "#1d4ed8", "#be123c", "#a16207", "#7c3aed", "#0e7490")
+
+
+def family_color(family: str) -> str | None:
+    """Tint for one self-reported family name, or ``None`` for "nothing to tint".
+
+    ``None`` is not an error case: an empty name means the model produced no
+    usable self-report, and there is no claim on the line to colour.
+    """
+    name = family.strip().lower()
+    if not name:
+        return None
+    if name in _FAMILY_COLORS:
+        return _FAMILY_COLORS[name]
+    # Deterministic mixing (position-weighted), so "minimax2" and "minimax" do not
+    # land on the same fallback slot.
+    digest = sum((i + 1) * ord(ch) for i, ch in enumerate(name))
+    return _FAMILY_FALLBACK[digest % len(_FAMILY_FALLBACK)]
+
+
+def _shade(color: str, factor: float) -> str:
+    """Darken a ``#rrggbb`` colour towards black by ``factor``.
+
+    Used for the card's hairline rules. The card background is one of five tints
+    depending on the verdict, so a fixed grey rule clashes on some of them, and a
+    rule that fights its own background is worse than no rule at all.
+    """
+    try:
+        parts = [int(color[i : i + 2], 16) for i in (1, 3, 5)]
+    except (ValueError, IndexError):
+        return "#dddddd"
+    return "#" + "".join(f"{max(0, min(255, int(c * factor))):02x}" for c in parts)
+
 #: How the identity probe's per-model verdict is worded on the card. The probe's
 #: own vocabulary is ``contradiction`` / ``unstable`` / ``unrechecked`` /
 #: ``consistent`` / ``unchecked`` (``relaycheck/probes/identity.py``), and the
@@ -111,7 +192,7 @@ _SEVERITY_CHIPS: tuple[tuple[str, str], ...] = (
 #: than to a blank line.
 _FAMILY_VERDICT_TEXT: dict[str, str] = {
     "contradiction": "售卖 {expected}，自称 {reported}",
-    "consistent": "售卖 {expected}，自称 {expected}（一致）",
+    "consistent": "售卖 {expected}，自称 {reported}（一致）",
     "unstable": "同一个问题问两遍，自称的厂商不一样 —— 不采信",
     "unrechecked": "自称与售卖名称不同，但没来得及复核 —— 不下结论",
     "unchecked": "没拿到可用的自述",
@@ -133,18 +214,38 @@ def _display_width(text: str) -> int:
     return sum(2 if ord(ch) > 0x2E7F else 1 for ch in text)
 
 
-def _family_lines(report: dict[str, Any]) -> list[str]:
-    """One line per model: what it was sold as, and what it said it was.
+def _split_template(key: str, expected: str, reported: str) -> tuple[str, str, str]:
+    """Split a ``_FAMILY_VERDICT_TEXT`` template around its ``{reported}`` slot.
 
-    The identity probe already extracts this, and it is the single most
-    interesting thing a non-expert takes out of a run — but it only reached the
-    window as a finding *title* (「模型自称的厂商与售卖名称不一致」), with the actual
-    per-model claims buried in ``report.json``. Showing the claims makes this
-    tool's own caveat checkable instead of merely stated: the reader sees the
-    quote, sees that it is stock "I was created by OpenAI" boilerplate coming off
-    a DeepSeek endpoint, and understands *why* a self-report cannot carry a
-    verdict. A caveat the reader can verify is worth more than one they must take
-    on trust.
+    Partitioning the template instead of restating the sentence here keeps the
+    wording in exactly one place, and guarantees the tinted piece is the same
+    substring the plain-text line shows.
+    """
+    head, _slot, tail = _FAMILY_VERDICT_TEXT[key].partition("{reported}")
+    return head.format(expected=expected), reported, tail
+
+
+def _family_rows(report: dict[str, Any]) -> list[tuple[str, str, str]]:
+    """``(prefix, reported, suffix)`` per model — the card's colouring hook.
+
+    ``prefix + reported + suffix`` is exactly the line ``_family_lines`` returns,
+    so the plain-text form and the tinted form are rendered from one source and
+    cannot drift apart.
+
+    Only the middle piece is tinted, and only by vendor. Tinting the whole row
+    would also tint 「售卖 deepseek」 — the name being *checked* — with the colour of
+    the claim being *made*, which inverts what the colour means. The middle piece
+    is empty when the model produced no usable self-report: there is no claim on
+    the line, so there is nothing to tint.
+
+    Why this exists at all: the identity probe's per-model claims used to reach
+    the window only as a finding *title* (「模型自称的厂商与售卖名称不一致」), with the
+    claims themselves and the quote that produced them left in ``report.json``.
+    Showing them is what makes the tool's own caveat checkable rather than merely
+    stated: the reader sees that the "wrong" answer is stock "I was created by
+    OpenAI" boilerplate coming off a DeepSeek endpoint, and understands *why* a
+    self-report cannot carry a verdict. A caveat the reader can verify is worth
+    more than one they must take on trust.
 
     Quotes come from the ``id-100`` finding's own evidence rather than being
     re-derived here, so the window can never pick a different sentence than the
@@ -172,10 +273,10 @@ def _family_lines(report: dict[str, Any]) -> list[str]:
             ((str(m), r) for m, r in observations.items() if isinstance(r, dict)),
             key=lambda kv: (order.get(str(kv[1].get("verdict")), 9), kv[0]),
         )
-        rendered: list[tuple[str, str, str]] = []
+        rows: list[tuple[str, str, str, str, str]] = []
         for model, record in ranked:
             if record.get("error"):
-                rendered.append(("?", model, "自述采集失败"))
+                rows.append(("?", model, "自述采集失败", "", ""))
                 continue
             verdict = str(record.get("verdict") or "unchecked")
             expected = str(record.get("expected_family") or "未知")
@@ -186,35 +287,45 @@ def _family_lines(report: dict[str, Any]) -> list[str]:
             )
             if verdict == "contradiction":
                 mark = "!"
-                text = _FAMILY_VERDICT_TEXT["contradiction"].format(
-                    expected=expected, reported=reported
-                )
+                head, tinted, tail = _split_template("contradiction", expected, reported)
                 quote = quotes.get(model)
                 if quote:
-                    pad = " " * max(2, _QUOTE_COLUMN - _display_width(text))
-                    text += f"{pad}「{quote}」"
+                    pad = " " * max(
+                        2, _QUOTE_COLUMN - _display_width(head + tinted + tail)
+                    )
+                    tail += f"{pad}「{quote}」"
             elif verdict == "consistent":
                 mark = "="
-                text = _FAMILY_VERDICT_TEXT["consistent"].format(
-                    expected=expected, reported=reported
-                )
+                # When the probe recorded no family at all, fall back to the sales
+                # name rather than printing 「自称 未知（一致）」, which contradicts
+                # itself.
+                agreed = expected if reported == "未知" else reported
+                head, tinted, tail = _split_template("consistent", expected, agreed)
             else:
                 mark = "?"
-                text = _FAMILY_VERDICT_TEXT.get(verdict, _FAMILY_VERDICT_TEXT["unchecked"])
-            rendered.append((mark, model, text))
+                head = _FAMILY_VERDICT_TEXT.get(verdict, _FAMILY_VERDICT_TEXT["unchecked"])
+                tinted, tail = "", ""
+            rows.append((mark, model, head, tinted, tail))
 
         # Pad the model name to the batch width. Consolas is monospace for ASCII
         # but Tk substitutes a *proportional* font for the CJK runs, so the 售卖
         # column only lines up if the one field that is always ASCII and always
         # differs in length is padded by hand. Without this the block
         # stair-steps and reads as broken text rather than as a table.
-        width = min(max((len(m) for _, m, _ in rendered), default=0), 26)
-        lines: list[str] = []
-        for mark, model, text in rendered:
+        width = min(max((len(m) for _, m, _, _, _ in rows), default=0), 26)
+        out: list[tuple[str, str, str]] = []
+        for mark, model, head, tinted, tail in rows:
             pad = " " * (width - len(model)) if len(model) <= width else ""
-            lines.append(f"  {mark} {model}{pad}  {text}")
-        return lines
+            out.append((f"  {mark} {model}{pad}  {head}", tinted, tail))
+        return out
     return []
+
+
+def _family_lines(report: dict[str, Any]) -> list[str]:
+    """``_family_rows`` flattened to plain text — one line per model."""
+    return [
+        prefix + reported + suffix for prefix, reported, suffix in _family_rows(report)
+    ]
 
 
 # ------------------------------------------------------------------- process glue
@@ -529,9 +640,22 @@ class RelayCheckApp:
             font=("Microsoft YaHei UI", 9, "bold"),
         ).pack(anchor="w")
 
+    def _add_rule(self, parent: tk.Misc) -> tk.Frame:
+        """A 1px hairline that takes its colour from the card underneath it.
+
+        ``ttk.Separator`` is the obvious choice and the wrong one: ttk widgets
+        ignore ``background``, so on a tinted card (``#fee2e2`` and friends) it
+        keeps the theme's grey and reads as a stray line from another window.
+        """
+        rule = tk.Frame(parent, height=1, bd=0, background="#dddddd")
+        rule.pack(fill="x", padx=12, pady=0)
+        return rule
+
     def _build_verdict(self) -> None:
         self.card = tk.Frame(self.root, bd=1, relief="solid", background="#eeeeee")
         self.card.pack(fill="x", padx=16, pady=(6, 0))
+
+        # ---- 结论
         self.verdict_label = tk.Label(
             self.card, text="还没跑过", font=("Microsoft YaHei UI", 13, "bold"),
             background="#eeeeee", anchor="w", justify="left",
@@ -541,20 +665,77 @@ class RelayCheckApp:
             self.card, text="", background="#eeeeee", anchor="w", justify="left",
             wraplength=900,
         )
-        self.verdict_detail.pack(fill="x", padx=12, pady=(0, 6))
-        self.chips_label = tk.Label(
-            self.card, text="", background="#eeeeee", anchor="w", justify="left",
-            font=("Consolas", 10),
+        self.verdict_detail.pack(fill="x", padx=12, pady=(0, 8))
+
+        # ---- 问题数量
+        # Each section carries its own leading rule, so hiding a section hides its
+        # rule with it instead of leaving two rules stacked with nothing between.
+        self.chips_section = tk.Frame(self.card, background="#eeeeee")
+        self.chips_section.pack(fill="x")
+        self.chips_rule = self._add_rule(self.chips_section)
+        tk.Label(
+            self.chips_section, text="问题数量", background="#eeeeee", anchor="w",
+            font=("Microsoft YaHei UI", 9), foreground="#6b7280",
+        ).pack(fill="x", padx=12, pady=(8, 3))
+        chips_holder = tk.Frame(self.chips_section, background="#eeeeee")
+        chips_holder.pack(anchor="w", padx=12, pady=(0, 8))
+        self.chips: dict[str, tk.Label] = {}
+        for key, tag in _SEVERITY_CHIPS:
+            chip = tk.Label(
+                chips_holder, text=f"{tag} 0", font=("Consolas", 9, "bold"), bd=0,
+                padx=7, pady=1, background="#eeeeee", foreground=_SEVERITY_EMPTY_FG,
+            )
+            chip.pack(side="left", padx=(0, 5))
+            self.chips[key] = chip
+
+        # ---- 家族线索
+        self.family_section = tk.Frame(self.card, background="#eeeeee")
+        self.family_section.pack(fill="x")
+        self.family_rule = self._add_rule(self.family_section)
+        self.family_caption = tk.Label(
+            self.family_section,
+            text="家族线索：每个模型自己供出的身份（只是线索，单独一条不足以定性）",
+            background="#eeeeee", anchor="w", justify="left", wraplength=900,
+            font=("Microsoft YaHei UI", 9), foreground="#6b7280",
         )
-        self.chips_label.pack(fill="x", padx=12, pady=(0, 6))
+        self.family_caption.pack(fill="x", padx=12, pady=(8, 3))
         # The per-model self-reports. Deliberately part of the card and not of the
         # log: the log is raw tool output and scrolls away, whereas "who did each
         # model say it was" is the evidence for the caveat printed right above it.
-        self.family_label = tk.Label(
-            self.card, text="", background="#eeeeee", anchor="w", justify="left",
-            font=("Consolas", 9), wraplength=900,
+        #
+        # A ``Text`` and not a ``Label``: tinting the self-reported vendor means
+        # tinting part of a line, and a Label carries one colour for the whole
+        # string. What the widget costs in fiddle it pays back in selection — the
+        # quote is the evidence, and people paste evidence.
+        self.family_text = tk.Text(
+            self.family_section, height=1, font=("Consolas", 9), bd=0,
+            highlightthickness=0, background="#eeeeee", foreground="#333333",
+            wrap="char", cursor="arrow", takefocus=0,
         )
-        self.family_label.pack(fill="x", padx=12, pady=(0, 10))
+        self.family_text.pack(fill="x", padx=12, pady=(0, 10))
+        self.family_text.configure(state="disabled")
+
+        # Nothing has been measured yet, so neither section has anything true to
+        # say. A row of six zeros would read as "we measured zero problems", which
+        # is a claim this window has not earned.
+        self._set_sections(show_chips=False, show_family=False)
+
+    def _set_sections(self, show_chips: bool, show_family: bool) -> None:
+        """Show or hide the two lower sections, preserving their order.
+
+        ``pack`` always appends, so the order has to be re-established by hand —
+        otherwise a second run could come back with the family clue sitting above
+        the problem counts.
+        """
+        self.chips_section.pack_forget()
+        self.family_section.pack_forget()
+        if show_family:
+            self.family_section.pack(fill="x")
+        if show_chips:
+            if show_family:
+                self.chips_section.pack(fill="x", before=self.family_section)
+            else:
+                self.chips_section.pack(fill="x")
 
     def _build_log(self) -> None:
         wrap = ttk.LabelFrame(self.root, text="运行日志", padding=(8, 6, 8, 8))
@@ -639,39 +820,126 @@ class RelayCheckApp:
             if self._probes_total:
                 self.status_var.set(f"已完成 {self._probes_done}/{self._probes_total} 项")
 
+    def _tint(self, bg: str) -> None:
+        """Repaint the whole card, recursing so a new section cannot be forgotten.
+
+        The chips are painted separately: their fill carries meaning (see
+        ``_SEVERITY_FILL``) and must not be overwritten with the card colour.
+        """
+        chips = {id(chip) for chip in self.chips.values()}
+
+        def paint(widget: tk.Misc) -> None:
+            if id(widget) not in chips:
+                try:
+                    widget.configure(background=bg)
+                except tk.TclError:
+                    pass
+            for child in widget.winfo_children():
+                paint(child)
+
+        paint(self.card)
+        for rule in (self.chips_rule, self.family_rule):
+            rule.configure(background=_shade(bg, 0.9))
+
+    def _fill_family(self, rows: Sequence[tuple[str, str, str]]) -> None:
+        """Render the family block, tinting each self-reported vendor.
+
+        Only the reported piece is tinted. Tinting the whole line would also tint
+        「售卖 deepseek」 — the name being *checked* — in the colour of the claim being
+        *made*, which inverts what the colour means. Same vendor, same colour, so
+        "both of these answered OpenAI" is visible without reading every line.
+
+        The colour is identity grouping, never guilt: it says those two claims are
+        the same claim, not that either model is a fake. The caption above the
+        block keeps saying so, because colour is exactly where a lead gets
+        mistaken for a verdict.
+        """
+        widget = self.family_text
+        widget.configure(state="normal")
+        widget.delete("1.0", "end")
+        for index, (prefix, reported, suffix) in enumerate(rows):
+            widget.insert("end", prefix)
+            tint = family_color(reported)
+            if tint and reported:
+                tag = f"fam:{index}"
+                widget.tag_configure(tag, foreground=tint)
+                widget.insert("end", reported, tag)
+            widget.insert("end", suffix)
+            if index != len(rows) - 1:
+                widget.insert("end", "\n")
+        # Height follows the content, so a one-model run does not leave a block of
+        # blank monospace under the card. Counted as *display* lines rather than as
+        # rows, because a long quote wraps and a row count would clip the tail of
+        # it — silently cutting off the evidence the block exists to show.
+        height = len(rows)
+        try:
+            widget.update_idletasks()
+            # A widget that has not been laid out yet reports one display line per
+            # character, which would inflate the card to the length of the quote.
+            # Only trust the count once it knows its own width.
+            if rows and widget.winfo_width() > 1:
+                counted = widget.count("1.0", "end-1c", "displaylines")
+                height = int(counted[0] if isinstance(counted, tuple) else counted)
+        except (tk.TclError, TypeError, ValueError):
+            pass
+        widget.configure(height=max(1, height))
+        widget.configure(state="disabled")
+
+    def _card_text(self) -> str:
+        """The whole card as plain text — the handle tests assert on, and what a
+        future 「复制结论」 button will hand over.
+
+        The card is a dozen widgets now; asserting on thirteen separate ``cget``
+        calls would pin the layout instead of the content. Sections that are
+        hidden contribute nothing, so this reads as what the user sees.
+        """
+        parts = [self.verdict_label["text"]]
+        if self.verdict_detail["text"]:
+            parts.append(self.verdict_detail["text"])
+        if self.chips_section.winfo_manager():
+            parts.append(
+                "   ".join(
+                    f"{tag}={self.chips[key]['text'].split()[-1]}"
+                    for key, tag in _SEVERITY_CHIPS
+                )
+            )
+        if self.family_section.winfo_manager():
+            parts.append(self.family_caption["text"])
+            content = self.family_text.get("1.0", "end-1c")
+            if content:
+                parts.append(content)
+        return "\n".join(part for part in parts if part)
+
     def _show_card(
         self,
         verdict: str,
         detail: str,
         counts: dict[str, int] | None,
-        families: list[str] | None = None,
+        family_rows: Sequence[tuple[str, str, str]] | None = None,
     ) -> None:
         fg, bg, _ = VERDICT_STYLE.get(verdict, ("#333333", "#eeeeee", ""))
-        for widget in (
-            self.card,
-            self.verdict_label,
-            self.verdict_detail,
-            self.chips_label,
-            self.family_label,
-        ):
-            widget.configure(background=bg)
+        self._tint(bg)
         self.verdict_label.configure(text=verdict, foreground=fg)
         self.verdict_detail.configure(text=detail, foreground="#333333")
-        if counts:
-            self.chips_label.configure(
-                text="   ".join(f"{tag}={counts.get(key, 0)}" for key, tag in _SEVERITY_CHIPS),
-                foreground="#333333",
+
+        # A chip is filled only when its count is non-zero: a solid red
+        # ``CRITICAL 0`` on a run that found nothing reads as an alarm, which is
+        # the opposite of what the card says. Filled means "this happened"; grey
+        # means "this did not".
+        for key, tag in _SEVERITY_CHIPS:
+            count = (counts or {}).get(key, 0)
+            fill_bg, fill_fg = _SEVERITY_FILL.get(key, ("#475569", "#ffffff"))
+            self.chips[key].configure(
+                text=f"{tag} {count}",
+                background=fill_bg if count > 0 else bg,
+                foreground=fill_fg if count > 0 else _SEVERITY_EMPTY_FG,
             )
-        else:
-            self.chips_label.configure(text="")
-        if families:
-            self.family_label.configure(
-                text="家族线索：每个模型自己供出的身份（只是线索，单独一条不足以定性）\n"
-                + "\n".join(families),
-                foreground="#333333",
-            )
-        else:
-            self.family_label.configure(text="")
+
+        rows = list(family_rows or ())
+        # Sections first, then content: the family Text sizes itself from its own
+        # laid-out width, and a widget that is still unpacked has none.
+        self._set_sections(bool(counts), bool(rows))
+        self._fill_family(rows)
         self.root.update_idletasks()
 
     def _open_out_dir(self) -> None:
@@ -862,7 +1130,7 @@ class RelayCheckApp:
         if findings:
             worst = findings[0]
             top = f"\n最严重的一条：{worst.get('id', '')}  {worst.get('title', '')}"
-        self._show_card(verdict, plain + top, counts, _family_lines(report))
+        self._show_card(verdict, plain + top, counts, _family_rows(report))
         self._log("")
         self._log(f"报告：{self.last_out_dir / 'report.md'}")
         self._log(f"原始：{self.last_out_dir / 'report.json'}")

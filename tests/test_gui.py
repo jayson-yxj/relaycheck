@@ -344,7 +344,7 @@ def test_card_survives_an_unknown_verdict() -> None:
         app = G.RelayCheckApp(root)
         app._show_card("某个将来才会有的结论", "说明", {"info": 7})
         assert app.verdict_label["text"] == "某个将来才会有的结论"
-        assert "INFO=7" in app.chips_label["text"]
+        assert "INFO=7" in app._card_text()
     finally:
         root.update_idletasks()
 
@@ -463,16 +463,221 @@ def test_switching_cards_clears_the_previous_runs_family_lines() -> None:
         return
     try:
         app = G.RelayCheckApp(root)
-        app._show_card("检测到中等问题", "说明", {"medium": 1}, ["  ! m  售卖 a，自称 b"])
-        assert "自称 b" in app.family_label["text"], app.family_label["text"]
-        assert "家族线索" in app.family_label["text"]
+        app._show_card(
+            "检测到中等问题", "说明", {"medium": 1}, [("  ! m  售卖 a，自称 ", "b", "")]
+        )
+        assert "自称 b" in app._card_text(), app._card_text()
+        assert "家族线索" in app._card_text()
 
         # Every path with no family data must clear it — including 「正在检测…」
-        # and 「运行失败」, which never call _family_lines at all.
+        # and 「运行失败」, which never call _family_rows at all.
         app._show_card("运行失败", "说明", None)
-        assert app.family_label["text"] == "", app.family_label["text"]
+        assert app.family_section.winfo_manager() == "", "失败卡不该留着上一次的家族线索"
+        assert "家族线索" not in app._card_text(), app._card_text()
     finally:
         root.update_idletasks()
+
+
+# ---------------------------------------------- 4. the card's sections and colours
+
+
+def _two_models_that_both_claim_openai() -> dict:
+    """Two models sold as different vendors that both answer "OpenAI".
+
+    That is the shape a real run keeps producing: distillation residue leaves the
+    same stock sentence on models with nothing else in common, and making that
+    visible at a glance — without reading every line — is the entire reason the
+    self-reported vendor is tinted.
+    """
+    return {
+        "results": [
+            {
+                "probe": "identity",
+                "data": {
+                    "observations": {
+                        "gemini-1.5-pro": {
+                            "expected_family": "google",
+                            "self_reported_families": ["openai"],
+                            "confirmed_families": ["openai"],
+                            "verdict": "contradiction",
+                        },
+                        "deepseek-chat": {
+                            "expected_family": "deepseek",
+                            "self_reported_families": ["openai"],
+                            "confirmed_families": ["openai"],
+                            "verdict": "contradiction",
+                        },
+                    }
+                },
+            }
+        ]
+    }
+
+
+def test_a_card_that_measured_nothing_shows_no_sections() -> None:
+    """A row of six grey zeros would read as "we measured zero problems".
+
+    On the failure card that is a claim the run never earned — it did not measure
+    anything at all — so the sections are hidden rather than zeroed.
+    """
+    if not _need_gui():
+        return
+    root = _tk_root()
+    if root is None:
+        _skip("no display available")
+        return
+    try:
+        app = G.RelayCheckApp(root)
+        assert app.chips_section.winfo_manager() == "", "启动时不该有问题数量区"
+        assert app.family_section.winfo_manager() == "", "启动时不该有家族线索区"
+
+        app._show_card("运行失败", "说明", None)
+        assert app.chips_section.winfo_manager() == "", "没查成就不该有问题数量"
+        assert app.family_section.winfo_manager() == ""
+        assert "CRITICAL" not in app._card_text(), app._card_text()
+    finally:
+        root.update_idletasks()
+
+
+def test_the_sections_come_back_in_the_same_order_after_being_hidden() -> None:
+    """``pack`` appends, so re-showing a section has to restore its position.
+
+    Without the explicit ``before=`` in ``_set_sections``, the second run's card
+    comes back with the family clue sitting above the problem counts — a layout
+    that only appears on the *second* run, which is exactly the kind of thing a
+    screenshot review of a fresh window never catches.
+    """
+    if not _need_gui():
+        return
+    root = _tk_root()
+    if root is None:
+        _skip("no display available")
+        return
+    try:
+        app = G.RelayCheckApp(root)
+        rows = G._family_rows(_two_models_that_both_claim_openai())
+        app._show_card("检测到中等问题", "说明", {"medium": 1}, rows)
+        first = [id(w) for w in app.card.pack_slaves()]
+        assert app.card.pack_slaves().index(app.chips_section) < app.card.pack_slaves().index(
+            app.family_section
+        ), "问题数量必须排在家族线索前面"
+
+        # Hide both, then bring them back — the order must survive the round trip.
+        app._show_card("运行失败", "说明", None)
+        app._show_card("检测到中等问题", "说明", {"medium": 1}, rows)
+        assert [id(w) for w in app.card.pack_slaves()] == first, "重排后顺序变了"
+
+        # And a card with only families, or only counts, still lands in order.
+        app._show_card("正在检测…", "说明", {"medium": 1}, [])
+        assert app.chips_section.winfo_manager() and not app.family_section.winfo_manager()
+        app._show_card("正在检测…", "说明", None, rows)
+        assert app.family_section.winfo_manager() and not app.chips_section.winfo_manager()
+    finally:
+        root.update_idletasks()
+
+
+def test_a_severity_chip_is_only_filled_when_it_actually_happened() -> None:
+    """A filled red ``CRITICAL 0`` is an alarm, on the card where it can least be one.
+
+    The chip has to distinguish "this happened" from "this did not". Colouring a
+    zero says the opposite of what its own number says, and it does it on the one
+    card where the reader most needs to be told that nothing was found.
+    """
+    if not _need_gui():
+        return
+    root = _tk_root()
+    if root is None:
+        _skip("no display available")
+        return
+    try:
+        app = G.RelayCheckApp(root)
+        app._show_card("未检测到问题", "说明", {"info": 2, "clean": 7})
+        card_bg = G.VERDICT_STYLE["未检测到问题"][1]
+
+        for key in ("critical", "high", "medium", "low"):
+            chip = app.chips[key]
+            assert str(chip["background"]) == card_bg, f"{key} 计数为 0，不该上色"
+            assert str(chip["foreground"]) == G._SEVERITY_EMPTY_FG, key
+            assert chip["text"].endswith(" 0"), chip["text"]
+        for key in ("info", "clean"):
+            chip = app.chips[key]
+            fill_bg, fill_fg = G._SEVERITY_FILL[key]
+            assert str(chip["background"]) == fill_bg, key
+            assert str(chip["foreground"]) == fill_fg, key
+            assert str(chip["background"]) != card_bg, key
+        assert "INFO=2" in app._card_text() and "CLEAN=7" in app._card_text()
+
+        # The hairline has to belong to the card it sits on: the card background
+        # changes with the verdict, and a fixed grey rule clashes on some of them.
+        assert str(app.chips_rule["background"]) == G._shade(card_bg, 0.9)
+        assert str(app.chips_rule["background"]) != card_bg
+    finally:
+        root.update_idletasks()
+
+
+def test_the_family_block_tints_the_claim_and_not_the_name_being_checked() -> None:
+    """Colour says "these two lines are the same claim", never "this model is fake".
+
+    Tinting the whole line would paint 「售卖 google」 — the name being *checked* — in
+    the colour of the claim being *made*, which inverts what the block means. The
+    tint must cover exactly the self-reported vendor and nothing else.
+    """
+    if not _need_gui():
+        return
+    root = _tk_root()
+    if root is None:
+        _skip("no display available")
+        return
+    try:
+        report = _two_models_that_both_claim_openai()
+        rows = G._family_rows(report)
+        app = G.RelayCheckApp(root)
+        app._show_card("检测到中等问题", "说明", {"medium": 1}, rows)
+
+        widget = app.family_text
+        tinted: list[tuple[str, str]] = []
+        for tag in widget.tag_names():
+            if not str(tag).startswith("fam:"):
+                continue
+            ranges = widget.tag_ranges(tag)
+            for start, end in zip(ranges[::2], ranges[1::2]):
+                tinted.append((widget.get(start, end), str(widget.tag_cget(tag, "foreground"))))
+        assert tinted, "家族线索一句都没上色"
+        assert {text for text, _ in tinted} == {"openai"}, f"上色的片段不对：{tinted}"
+        assert len({colour for _, colour in tinted}) == 1, "同一个自称厂商必须是同一个颜色"
+
+        # The widget and the plain-text renderer must not drift: one datum, two
+        # renderings. 售卖 is on the line, and it is not inside any tinted span.
+        assert widget.get("1.0", "end-1c").split("\n") == G._family_lines(report)
+        assert all("售卖" not in text for text, _ in tinted), tinted
+    finally:
+        root.update_idletasks()
+
+
+def test_a_vendors_colour_is_the_same_on_every_run() -> None:
+    """``hash()`` is salted per process, so a colour picked that way would change
+    on every launch and "same vendor, same colour" would quietly become a lie.
+
+    Checked at the source rather than by observation, because the failure is
+    invisible from inside a single process.
+    """
+    if not _need_gui():
+        return
+    assert "hash(" not in inspect.getsource(G.family_color), (
+        "厂商颜色不能用 hash() 决定：它按进程加盐，同一份报告每次跑颜色都不一样"
+    )
+    assert G.family_color("openai") == G.family_color("openai")
+    assert G.family_color("OpenAI") == G.family_color("openai"), "大小写不该换颜色"
+    assert G.family_color("") is None, "没有自述就没有要上色的东西"
+    assert G.family_color("   ") is None
+
+    unknown = G.family_color("some-vendor-from-2030")
+    assert unknown in G._FAMILY_FALLBACK, unknown
+    assert unknown == G.family_color("some-vendor-from-2030")
+    # Two different unknown vendors should not collapse onto one slot every time.
+    spread = {G.family_color(f"vendor-{i}") for i in range(12)}
+    assert len(spread) > 1, "未知厂商全都撞到同一个颜色"
+    assert all(colour in G._FAMILY_FALLBACK for colour in spread)
 
 
 def test_window_builds_with_the_expected_initial_state() -> None:
