@@ -44,8 +44,8 @@ PyPI 凭据。没有东西可以泄漏，也没有东西需要定期轮换。
 4. 打 tag 并推：
 
    ```bash
-   git tag -a v0.1.1 -m "relaycheck 0.1.1"
-   git push origin v0.1.1
+   git tag -a v0.1.0 -m "relaycheck 0.1.0"
+   git push origin v0.1.0
    ```
 
 5. `release.yml` 会构建 sdist + wheel、跑 `twine check`、校验 **tag 和构建出来的版本号一致**，
@@ -65,8 +65,8 @@ PyPI 凭据。没有东西可以泄漏，也没有东西需要定期轮换。
 * 只发 PyPI → 正常打 tag，桌面那条腿红了也不影响 `release.yml` 的结果。
 
 `desktop.yml` 不校验 tag 与版本号是否一致（它不做不可逆的事），但如果 tag 和
-`pyproject.toml` 里的版本对不上，zip 的文件名会跟着 `relaycheck/__init__.py` 走，
-和 tag 不一致 —— 看到这种不一致，说明第 1 步漏了。
+`relaycheck/__init__.py` 里的版本对不上，zip 的文件名会跟着 `__version__` 走，和 tag
+不一致 —— 看到这种不一致，说明第 1 步漏了。
 
 ## 不可逆
 
