@@ -136,12 +136,41 @@ class ReliabilityProbe(Probe):
         failure_rate = (len(failed) / attempted) if attempted else 0.0
         latencies = [o["latency_s"] for o in ok]
 
+        # 「失败」不是一个东西，是三个。只有第一个是可用性问题：
+        #   * 没回来（超时/连接断），或者回来了 5xx —— 端点是**真的**没服务成这个
+        #     极简请求；
+        #   * 429 —— 端点其实**正常工作**，它在叫我们慢一点。官方直连 API 在
+        #     --delay 0.4 的连发下就会这样回。把这种算成「极不稳定」，等于拿我们
+        #     自己的节奏去指控一个健康的端点；
+        #   * 其他 4xx —— 请求本身被拒（形状不对、key 不对、模型不存在）。同样不
+        #     是「端点撑不住」的证据。
+        # 所以能升级到 HIGH 的只有第一个桶；另外两个照实记下来，进 INFO。
+        unavailable = [
+            o for o in failed
+            if o.get("http_status") is None or o["http_status"] >= 500
+        ]
+        throttled = [o for o in failed if o.get("http_status") == 429]
+        refused = [
+            o
+            for o in failed
+            if o.get("http_status") is not None
+            and 400 <= o["http_status"] < 500
+            and o["http_status"] != 429
+        ]
+        unavailability = (len(unavailable) / attempted) if attempted else 0.0
+
         stats: dict[str, Any] = {
             "model": model,
             "samples": attempted,
             "succeeded": len(ok),
             "failed": len(failed),
             "failure_rate": round(failure_rate, 3),
+            #: 只有这一项能升级成 HIGH；failure_rate 只是「没成功」的原始比例，
+            #: 它把限流和我们自己发歪的请求也算进去了，不能直接当结论用。
+            "unavailability_rate": round(unavailability, 3),
+            "unavailable": len(unavailable),
+            "throttled": len(throttled),
+            "refused": len(refused),
             "timeout_s": timeout,
             "retries_disabled": True,
         }
@@ -196,30 +225,30 @@ class ReliabilityProbe(Probe):
             )
             return result
 
-        if failure_rate > FAILURE_RATE_HIGH:
-            timeouts = stats.get("timeout_failures", 0)
-            err_resp = stats.get("error_response_failures", 0)
+        if unavailability > FAILURE_RATE_HIGH:
+            timeouts = sum(1 for o in unavailable if o.get("http_status") is None)
+            err_resp = sum(1 for o in unavailable if o.get("http_status") is not None)
             if err_resp and not timeouts:
                 how = (
-                    f"{len(failed)} 次都返回了错误响应"
+                    f"{len(unavailable)} 次都返回了错误响应"
                     f"（最典型的是 {stats['errors'][0][:80]}），没有一次正常完成"
                 )
             elif timeouts and not err_resp:
-                how = f"{len(failed)} 次在 {timeout:.0f} 秒内都没有返回"
+                how = f"{len(unavailable)} 次在 {timeout:.0f} 秒内都没有返回"
             else:
                 how = (
                     f"其中 {timeouts} 次在 {timeout:.0f} 秒内没有返回，"
-                    f"{err_resp} 次直接返回了错误响应"
+                    f"{err_resp} 次直接返回了 5xx"
                 )
             self._find(
                 result,
                 id="rel-100",
-                title=f"中转站极不稳定：{len(failed)}/{attempted} 次极简请求失败",
+                title=f"中转站极不稳定：{len(unavailable)}/{attempted} 次极简请求没有服务成",
                 severity=Severity.HIGH,
                 confidence=Confidence.CONFIRMED,
                 summary=(
                     f"用最简请求（要求只回一个词、上限 8 token）连发 {attempted} 次，"
-                    f"{how}，失败率 {failure_rate:.0%}。"
+                    f"{how}，不可用率 {unavailability:.0%}。"
                     "而且这是**关闭重试**测出来的原始成功率。"
                     "一个连这种请求都服务不好的中转站，既不能稳定给你干活，"
                     "也让下面所有探针的结论都可能不完整——先解决可用性，再谈掉包。"
@@ -228,7 +257,7 @@ class ReliabilityProbe(Probe):
                 remediation=(
                     "先看 evidence.failures 里的 error 字段："
                     "若是超时，问服务方上游是否限流/超卖；"
-                    "若是 4xx/5xx，那通常是它自己的渠道配置坏了，要求其给出上游原始报错。"
+                    "若是 5xx，那通常是它自己的渠道配置坏了，要求其给出上游原始报错。"
                     "在稳定性恢复前，不要用它跑批量任务；"
                     "本次审计报告中标注为「不完整」的项目，都需要在稳定期重跑。"
                 ),
@@ -245,6 +274,32 @@ class ReliabilityProbe(Probe):
                     f"（最快 {stats.get('min_latency_s')} 秒 / 最慢 {stats.get('max_latency_s')} 秒），"
                     f"成功率 {len(ok)}/{attempted}。延迟这么高，通常意味着上游是共享池、"
                     "排队严重或者被限速，而不是直连官方 API。"
+                ),
+                evidence=stats,
+            )
+        elif throttled or refused:
+            # 「一次都没成功」和「端点撑不住」不是一回事。走到这里全是 429/4xx：
+            # 请求回来了，端点按规矩回绝了我们。它不足以证明端点健康（所以不能发
+            # rel-clean —— 那就是把「没测到」写成「没问题」），但更没资格指控端点
+            # 不稳定：那正是本工具最不该犯的错。
+            parts = []
+            if throttled:
+                parts.append(f"{len(throttled)} 次被限流（429）")
+            if refused:
+                parts.append(f"{len(refused)} 次被拒绝（4xx）")
+            self._find(
+                result,
+                id="rel-102",
+                title=f"可用性没能测出来：{attempted - len(ok)}/{attempted} 次被端点主动回绝",
+                severity=Severity.INFO,
+                confidence=Confidence.CONFIRMED,
+                summary=(
+                    f"用最简请求（要求只回一个词、上限 8 token）连发 {attempted} 次，"
+                    f"成功 {len(ok)} 次，" + "、".join(parts) + "。"
+                    "这些都不算「端点撑不住」：429 是端点正常工作、叫我们慢一点，"
+                    "4xx 是这一次请求本身被拒（形状不对、key 不对、模型不存在）。"
+                    "所以可用性这一项本次**没有结论**，"
+                    "换更长的 --delay 或更少的 --reliability-samples 再跑一次。"
                 ),
                 evidence=stats,
             )

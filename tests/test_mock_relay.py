@@ -69,9 +69,9 @@ def _free_port() -> int:
 
 
 class _Server:
-    def __init__(self, scenario: str) -> None:
+    def __init__(self, scenario: str, **serve_kwargs: Any) -> None:
         self.port = _free_port()
-        self.httpd = mock_relay.serve(self.port, scenario)
+        self.httpd = mock_relay.serve(self.port, scenario, **serve_kwargs)
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
         self.thread.start()
         self.base_url = f"http://127.0.0.1:{self.port}"
@@ -100,8 +100,9 @@ def run_audit(
     *,
     options: dict[str, Any] | None = None,
     probe_names: list[str] | None = None,
+    **serve_kwargs: Any,
 ) -> Report:
-    server = _Server(scenario)
+    server = _Server(scenario, **serve_kwargs)
     try:
         client = RelayClient(server.base_url, mock_relay.TEST_API_KEY, delay_between_requests=0.0)
         ctx = ProbeContext(
@@ -203,6 +204,87 @@ def test_twins_prompts_are_open_ended() -> None:
                 f"提示 {key!r} 含唯一正确答案型问法 {needle!r}；"
                 "这种提示会让不同的真实模型输出相同结果，从而产生假阳性。"
             )
+
+
+def test_endpoint_without_a_billing_panel_is_never_reported_as_clean() -> None:
+    """404 means "no panel here" — not "panel reachable and clean".
+
+    An official first-party endpoint (``api.deepseek.com``, ``api.openai.com``)
+    has no sub2api panel, no usage API and no model plaza: all six probed paths
+    simply 404. ``RelayClient.get_json`` documents "never raises on 4xx", so each
+    404 arrived as an ordinary entry carrying ``status: 404`` and no ``error``
+    key — while ``reachable`` was computed as "``error`` is not in the entry".
+    Every 404 therefore counted as a reachable panel, the report stated "probed 6
+    endpoints, 6 reachable", and the probe closed with ``bill-clean``.
+
+    That is the single thing this project must never do: turn "we measured
+    nothing" into "verified fine". It also made ``bill-202`` — the honest "all
+    panel endpoints unreachable" — unreachable code.
+
+    ``/health`` is exempt from the *verdict* on purpose: it answers 200 on
+    almost every deployment, panel or not, so it may be listed as reachable but
+    must never license a conclusion about billing.
+    """
+
+    report = run_audit("clean", CLEAN_MODELS, probe_names=["billing-panel"], panel=False)
+    ids = {f.id for f in report.all_findings}
+    print("\n[no-panel]", {k: v for k, v in report.counts.items() if v})
+    for f in report.all_findings:
+        print(f"  {f.severity.value:8} {f.id:22} {f.title}")
+
+    assert "bill-clean" not in ids, (
+        "六个面板端点全部 404，却报出「面板可达」的 bill-clean："
+        "把「没测到」写成了「已核实没问题」"
+    )
+    assert "bill-200" not in ids, "没有任何面板应答，却报出「识别为 sub2api 面板」"
+    assert "bill-202" in ids, (
+        "面板端点全部 404，既没报 bill-clean 也没报 bill-202，等于把这一项藏了起来"
+    )
+
+    probe = next(r for r in report.results if r.probe == "billing-panel")
+    assert probe.data["endpoints_reachable"] == ["/health"], (
+        "404 被算进了 endpoints_reachable："
+        f"{probe.data['endpoints_reachable']!r}（除了 /health 一个都不该有）"
+    )
+
+
+def test_rate_limiting_is_not_reported_as_an_unstable_relay() -> None:
+    """429 means "slow down", not "this endpoint is broken".
+
+    An official first-party API rate-limits a probe that fires a trivial request
+    every 0.4 s — that is the API working correctly. ``reliability`` used to
+    compute one ``failure_rate`` over every non-success and escalate anything
+    above ``FAILURE_RATE_HIGH`` (20%) to ``rel-100`` HIGH / 「中转站极不稳定」,
+    so pointing relaycheck at an official endpoint would accuse it of instability
+    caused entirely by our own pacing.
+
+    The opposite mistake is just as forbidden: with every request refused,
+    nothing was measured, and the run must not close with ``rel-clean`` /
+    「可用性正常」 either.
+    """
+
+    report = run_audit("clean", CLEAN_MODELS, probe_names=["reliability"], throttle=True)
+    ids = {f.id for f in report.all_findings}
+    print("\n[throttled]", {k: v for k, v in report.counts.items() if v})
+    for f in report.all_findings:
+        print(f"  {f.severity.value:8} {f.id:22} {f.title}")
+
+    assert report.counts.get("high", 0) == 0, (
+        "全部 429 被判成 HIGH：这是拿我们自己的请求节奏去指控一个正在正常限流的端点"
+    )
+    assert "rel-100" not in ids, "全部 429 被判成 rel-100「中转站极不稳定」"
+    assert "rel-clean" not in ids, (
+        "一次都没成功，却报出「可用性正常」：把「没测到」写成了「没问题」"
+    )
+    assert "rel-102" in ids, "限流既没报不稳定也没报未测出，等于把结论吞了"
+
+    stats = next(r for r in report.results if r.probe == "reliability").data["reliability"]
+    assert stats["unavailability_rate"] == 0.0, (
+        f"429 被算进了不可用率：{stats['unavailability_rate']}"
+    )
+    assert stats["throttled"] == stats["samples"], (
+        f"限流计数对不上：{stats['throttled']} / {stats['samples']}"
+    )
 
 
 def test_slow_relay_does_not_hang_the_audit() -> None:
@@ -418,6 +500,70 @@ def test_reasoning_relay_is_not_falsely_accused() -> None:
     )
     assert "id-clean" in ids, "推理模型在放大 token 预算后可以正常自述，身份检查却没有结论"
     assert "canary-clean" in ids, "标记回显检查在放大 token 预算后仍未完成"
+
+
+def test_reasoning_that_outlives_the_retry_budget_is_not_an_accusation() -> None:
+    """When our own token cap is why there is nothing to read, say exactly that.
+
+    ``ctx.ask`` retries a starved answer once with ``max(60 * 4, 1024) == 1024``
+    tokens (``base.grow_budget``). A thinking model can burn even that, and then
+    *every* attempt comes back with an empty ``content`` under
+    ``finish_reason == "length"``.
+
+    The canary check used to record ``canary in comp.content`` for that empty
+    string — False — and escalate to ``canary-100`` HIGH, telling the user their
+    prompt had probably been rewritten or answered from cache, on the strength of
+    a measurement our own ``max_tokens`` had destroyed. The stock ``reasoning``
+    scenario never caught it because ``_REASONING_TOKENS = 700`` sits *below* the
+    1024 retry ceiling, so the retry always recovered and the bug stayed hidden.
+
+    The identity check had the mirror bug in the other direction: an empty answer
+    counted as a usable self-description (``"".startswith("<")`` is False), so the
+    probe printed ``id-clean`` — "N models described themselves and none
+    contradicted the sold name" — about models that had said nothing at all.
+
+    Both are the dead-relay rule pointing the other way: an unmeasured check
+    reports that it could not measure, and never reports CLEAN *or* a finding.
+    """
+
+    report = run_audit(
+        "clean",
+        CLEAN_MODELS,
+        probe_names=["identity", "canary"],
+        reasoning_tokens=4096,
+    )
+    ids = {f.id for f in report.all_findings}
+    print("\n[starved]", {k: v for k, v in report.counts.items() if v})
+    for f in report.all_findings:
+        print(f"  {f.severity.value:8} {f.id:22} {f.title}")
+
+    noisy = [
+        f
+        for f in report.all_findings
+        if f.severity not in (Severity.CLEAN, Severity.INFO)
+    ]
+    assert not noisy, (
+        "被我们自己设的 token 上限挤空的回复被当成了证据："
+        + ", ".join(f"{f.id}({f.severity.value})" for f in noisy)
+    )
+
+    assert "canary-100" not in ids, (
+        "模型一次都没复述标记，是因为可见正文被 token 上限吃空了，"
+        "而不是因为中转站改写了提示词：canary-100 是拿自己的 max_tokens 当证据"
+    )
+    assert "id-clean" not in ids, (
+        "所有自述都是空字符串，却判成「自述与售卖名称不矛盾」（id-clean）"
+    )
+    assert "canary-clean" not in ids, "一次都没回显成功，却报了 canary-clean"
+
+    # The honest half of the rule: it has to *say* it could not check.
+    assert "canary-000" in ids, (
+        "标记回显一次都没测成，既没报 canary-100 也没报 canary-000，"
+        "等于把「没测到」藏起来了"
+    )
+    assert "id-000" in ids, (
+        "一份自述都没采到，却既没报 id-100 也没报 id-000"
+    )
 
 
 def test_noisy_relay_is_not_falsely_accused() -> None:
@@ -695,6 +841,68 @@ def test_model_autodiscovery_runs_without_models_flag() -> None:
         server.close()
 
 
+def test_a_refusal_to_list_a_marker_is_not_a_truncated_prefix() -> None:
+    """A model saying "I only see one" is talking, not listing.
+
+    Regression: ``_classify`` decided ``truncated`` from ``head in text`` alone.
+    A long-context model handed more than it can hold answers "I can only see
+    one of the two codes" and quotes the one it got while naming the other as
+    absent — and the substring test read that as "the tail survived, the head
+    did not", i.e. as proof that the front of the prompt was dropped before it
+    ever reached the model. The report then accused the relay of silent
+    truncation (HIGH) on the strength of a polite refusal.
+    """
+    from relaycheck.models import Completion, Usage
+    from relaycheck.probes.context import _classify
+
+    head, tail = "ALPHA-ABCDEFGH2345", "BETA-ZYXWVUTS6789"
+
+    def classify(text: str) -> dict:
+        return _classify(
+            Completion(
+                model_requested="m",
+                model_returned="m",
+                content=text,
+                usage=Usage(),
+                finish_reason="stop",
+            ),
+            head,
+            tail,
+            4000,
+            16000,
+        )
+
+    refusal = classify(
+        f"I can only see one of the two codes: {tail}. The other one is missing."
+    )
+    assert refusal["verdict"] != "truncated", (
+        "把「我只看到一个标记」读成了「前段输入被丢弃」——拿礼貌回绝当 HIGH 证据"
+    )
+    assert "missing" not in refusal
+
+    # The real case still has to work: only the codes, one of them absent.
+    real = classify(tail)
+    assert real["verdict"] == "truncated", "真正的截断没有被认出来"
+    assert real["missing"] == "head"
+
+
+def test_reproducibility_requires_an_identical_answer() -> None:
+    """A 90%-prefix match is not a noise floor.
+
+    ``_compare_answers`` tolerates a shortened tail so that a stream cut off at
+    the finish still counts as the same answer. Used as the *reproducibility*
+    gate, that tolerance promoted two merely similar ``temperature=0`` samples
+    into "this station reproduces itself", after which ordinary sampling noise
+    was reported as a stream/plain mismatch — a HIGH-severity false positive.
+    """
+    from relaycheck.probes.stream import _reproduces_itself
+
+    assert _reproduces_itself("abc def", "abc def")
+    assert _reproduces_itself("abc   def", "abc def")  # whitespace only
+    assert not _reproduces_itself("abc def ghi", "abc def")
+    assert not _reproduces_itself("", "")
+
+
 def _main() -> int:
     checks = [
         test_model_autodiscovery_runs_without_models_flag,
@@ -707,6 +915,8 @@ def _main() -> int:
         test_same_vendor_aliases_are_not_accused,
         test_dead_relay_is_never_reported_as_clean,
         test_context_probe_catches_silent_truncation,
+        test_a_refusal_to_list_a_marker_is_not_a_truncated_prefix,
+        test_reproducibility_requires_an_identical_answer,
         test_reasoning_relay_is_not_falsely_accused,
         test_noisy_relay_is_not_falsely_accused,
         test_echo_probe_compares_the_reported_model_name,

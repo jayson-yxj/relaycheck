@@ -251,6 +251,27 @@ class ParamsProbe(Probe):
                 - len(inconclusive)
                 - len(nondeterministic)
             )
+        elif not any(per_model for per_model in matrix.values()):
+            # Not one check completed: the time budget ran out before the first
+            # model, or ``--params-checks`` filtered the list down to nothing.
+            # Every other bucket is empty as a result — which meant the old
+            # ``else`` branch happily reported 「所有被测试的参数都产生了预期的行为
+            # 变化」 about a run in which *no* parameter was ever tested. CLEAN has
+            # to mean verified, so an empty matrix is a hole in the audit, not a
+            # pass.
+            self._find(
+                result,
+                id="params-105",
+                title="参数检查一项都没跑完",
+                severity=Severity.INFO,
+                confidence=Confidence.CONFIRMED,
+                summary=(
+                    "本探针没有对任何参数得出结论——时间预算在第一次检查之前就用尽了，"
+                    "或者检查项被过滤成了空集。参数透传这一项本次**没有被检验**，"
+                    "这不等于它通过了。"
+                ),
+                evidence={"matrix": matrix, "checks_requested": [c[0] for c in checks]},
+            )
         else:
             self._find(
                 result,
@@ -285,14 +306,38 @@ class ParamsProbe(Probe):
             model, [{"role": "user", "content": _COUNT_PROMPT}], max_tokens=16, temperature=0
         )
         billed = comp.usage.completion_tokens
-        over = billed is not None and billed > 24
-        return {
-            "verdict": "ignored" if over else "honoured",
+        reasoning = comp.usage.reasoning_tokens
+        detail: dict[str, Any] = {
             "requested_max_tokens": 16,
             "billed_completion_tokens": billed,
             "finish_reason": comp.finish_reason,
             "visible_chars": comp.visible_chars,
         }
+        if reasoning:
+            # On DeepSeek — and on any OpenAI-compatible reasoning endpoint —
+            # ``completion_tokens`` *includes* the hidden reasoning tokens, while
+            # ``max_tokens`` only caps what the caller gets to see. A model that
+            # thinks for 500 tokens before answering a two-token question
+            # therefore bills 500, which looks exactly like a relay that threw
+            # ``max_tokens`` away. Except this one is a documented property of the
+            # official API, so the accusation would land squarely on a
+            # first-party endpoint. Unmeasurable here, so not accused.
+            detail["verdict"] = "inconclusive"
+            detail["reasoning_tokens"] = reasoning
+            detail["note"] = (
+                "该模型把 reasoning token 也计入 completion_tokens，"
+                "max_tokens 只封可见正文，无法用计费 token 数判断它是否被忽略。"
+            )
+            return detail
+        if billed is None:
+            # No usage block at all: the number this check is built on simply
+            # does not exist. "honoured" here would be a pass for a measurement
+            # that was never made.
+            detail["verdict"] = "inconclusive"
+            detail["note"] = "响应没有返回 usage，无法判断 max_tokens 是否生效。"
+            return detail
+        detail["verdict"] = "ignored" if billed > 24 else "honoured"
+        return detail
 
     def _check_stop(self, ctx: ProbeContext, model: str) -> dict[str, Any]:
         # Differential test. Asking the model to echo a friendly word proves
@@ -407,7 +452,17 @@ class ParamsProbe(Probe):
 
     def _check_n(self, ctx: ProbeContext, model: str) -> dict[str, Any]:
         comp_raw = self._raw_chat(ctx, model, _SAMPLING_PROMPT, n=2, max_tokens=48)
-        choices = comp_raw.get("choices") if isinstance(comp_raw, dict) else None
+        if not _has_choices(comp_raw):
+            # No ``choices`` at all means we never received a completion: a 200
+            # with an HTML body lands here as ``{"_raw_text": ...}``. Nothing
+            # about ``n`` was observed, so nothing may be concluded about it.
+            return {
+                "verdict": "inconclusive",
+                "requested_n": 2,
+                "returned_choices": None,
+                "note": "响应里没有 choices，n 这一项没有被观察到。",
+            }
+        choices = comp_raw.get("choices")
         count = len(choices) if isinstance(choices, list) else 0
         return {
             "verdict": "honoured" if count >= 2 else "ignored",
@@ -437,11 +492,7 @@ class ParamsProbe(Probe):
                 "finish_reason": _first_finish_reason(raw),
                 "note": "回复为空，无法判断 response_format 是否生效。空回复不等于参数被忽略。",
             }
-        try:
-            json.loads(text)
-            ok = True
-        except Exception:  # noqa: BLE001
-            ok = False
+        ok = _parses_as_json(text)
         return {
             "verdict": "honoured" if ok else "ignored",
             "parsed_as_json": ok,
@@ -452,7 +503,13 @@ class ParamsProbe(Probe):
         raw = self._raw_chat(
             ctx, model, "Say the single word: hello", max_tokens=8, logprobs=True, top_logprobs=3
         )
-        choices = raw.get("choices") if isinstance(raw, dict) else None
+        if not _has_choices(raw):
+            return {
+                "verdict": "inconclusive",
+                "logprobs_present": False,
+                "note": "响应里没有 choices，logprobs 这一项没有被观察到。",
+            }
+        choices = raw.get("choices")
         has = bool(
             isinstance(choices, list)
             and choices
@@ -466,24 +523,40 @@ class ParamsProbe(Probe):
         }
 
     def _check_tools(self, ctx: ProbeContext, model: str) -> dict[str, Any]:
+        # ``tool_choice="required"``, deliberately *not* ``"auto"``. Under
+        # ``auto`` a model is allowed to answer in prose — that is the parameter
+        # working exactly as specified — so "no tool_calls came back" says
+        # nothing at all, and reading it as "the relay dropped tools" accuses an
+        # honest endpoint of something that never happened. ``required`` removes
+        # the ambiguity: the server has committed to emitting a tool call, so a
+        # plain prose answer with ``finish_reason == "stop"`` is a promise the
+        # endpoint did not keep.
         raw = self._raw_chat(
             ctx,
             model,
             _TOOL_MESSAGE,
             max_tokens=160,
             tools=_TOOL_SCHEMA,
-            tool_choice="auto",
+            tool_choice="required",
         )
+        if not _has_choices(raw):
+            return {
+                "verdict": "inconclusive",
+                "tool_calls_present": False,
+                "note": "响应里没有 choices，tools 这一项没有被观察到。",
+            }
         choice = _first_choice(raw)
         msg = (choice or {}).get("message") or {}
         calls = msg.get("tool_calls")
         has = bool(calls)
-        detail = {
+        detail: dict[str, Any] = {
             "verdict": "honoured" if has else "ignored",
             "tool_calls_present": has,
+            "tool_choice": "required",
         }
         if not has:
-            detail["response"] = str(msg.get("content"))[:160]
+            detail["finish_reason"] = _first_finish_reason(raw)
+            detail["response"] = _first_content(raw)[:160]
         return detail
 
     @staticmethod
@@ -537,6 +610,44 @@ def _first_choice(raw: Any) -> dict[str, Any] | None:
     if isinstance(choices, list) and choices and isinstance(choices[0], dict):
         return choices[0]
     return None
+
+
+def _has_choices(raw: Any) -> bool:
+    """Whether ``raw`` really is a chat-completion payload.
+
+    ``_post_chat`` hands back whatever ``/v1/chat/completions`` returned as long
+    as the status was below 400, and ``RelayClient`` wraps a non-JSON body as
+    ``{"_raw_text": ...}`` — a dict, so a bare ``isinstance(raw, dict)`` guard
+    passes and every field lookup below quietly reads "absent". That is how a
+    200 carrying an HTML body became evidence that ``logprobs`` or ``n`` had been
+    dropped: the parameter was never observed in the first place. No ``choices``
+    means no completion, and no completion means this check has no verdict — it
+    does not get to accuse anyone.
+    """
+    return isinstance(raw, dict) and isinstance(raw.get("choices"), list)
+
+
+def _parses_as_json(text: str) -> bool:
+    """Whether ``text`` is JSON, tolerating a markdown code fence.
+
+    Models routinely wrap JSON in `````json … ``` `` even in ``json_object``
+    mode. That is the model's formatting habit, not the relay dropping the
+    parameter, so unwrapping the fence keeps an honest endpoint honest. A genuine
+    prose answer carries no fence and still fails to parse.
+    """
+    body = text.strip()
+    if body.startswith("```"):
+        body = body[3:]
+        if body[:4].lower() == "json":
+            body = body[4:]
+        if body.endswith("```"):
+            body = body[:-3]
+        body = body.strip()
+    try:
+        json.loads(body)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _first_content(raw: Any) -> str:

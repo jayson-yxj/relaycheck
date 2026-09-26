@@ -20,7 +20,7 @@ from typing import Any
 from ..client import RelayBudgetExceeded, RelayError
 from ..families import claimed_family, detect_family
 from ..models import Confidence, ProbeResult, Severity
-from .base import Probe, ProbeContext
+from .base import Probe, ProbeContext, starved_of_visible_text
 
 IDENTITY_QUESTIONS: tuple[tuple[str, str], ...] = (
     ("creator", "Which company created you? Answer with the company name only."),
@@ -167,8 +167,16 @@ class IdentityProbe(Probe):
             # be reported as "self-descriptions all match". The ``#2`` re-ask
             # answers are not counted: they are a check on the first round, not a
             # fourth question.
+            # ``v.strip()`` matters: ``answers[key]`` is the *stripped* content,
+            # so a model squeezed empty by the token cap lands here as ``""``.
+            # ``"".startswith("<")`` is False, so without this test an empty
+            # reply counted as a usable self-description and the probe went on
+            # to write ``id-clean`` — "N models described themselves and none
+            # contradicted the sold name" — about models that said nothing.
             usable = sum(
-                1 for k, v in answers.items() if "#2" not in k and not v.startswith("<")
+                1
+                for k, v in answers.items()
+                if "#2" not in k and v.strip() and not v.startswith("<")
             )
             if usable:
                 models_with_answers += 1
@@ -381,6 +389,9 @@ class CanaryProbe(Probe):
 
             tries: list[dict[str, Any]] = []
             errors: list[str] = []
+            #: attempts whose visible answer was eaten by the token cap. Those
+            #: are holes in the audit, not failures of the relay.
+            starved = 0
             for _ in range(attempts):
                 canary = _new_canary()
                 prompt = (
@@ -408,6 +419,25 @@ class CanaryProbe(Probe):
                 except RelayError as exc:
                     errors.append(exc.describe())
                     continue
+                if comp.visible_empty or starved_of_visible_text(
+                    comp.content, comp.finish_reason
+                ):
+                    # Our own token cap decided there was nothing to read: a
+                    # reasoning model spends the whole budget thinking and
+                    # comes back with an empty ``content`` under
+                    # ``finish_reason: "length"``. Counting that as "did not
+                    # echo the canary" turns our cap into a HIGH-severity
+                    # accusation that the relay rewrote the prompt or served a
+                    # cached answer. ``ctx.ask`` already retried with a larger
+                    # budget (``base.py:grow_budget``); if that came back
+                    # starved too, or the retry itself failed and ``ask``
+                    # returned the starved first answer, this is still a hole
+                    # in the audit — never proof. A relay that really swallows
+                    # the prompt still fails this check, because the model
+                    # then answers *something* ("I don't see a code") and that
+                    # visible text is compared as usual.
+                    starved += 1
+                    continue
                 tries.append({
                     "canary": canary,
                     # A relay that never forwards the prompt (canned/cached
@@ -420,7 +450,15 @@ class CanaryProbe(Probe):
 
             if not tries:
                 # No usable sample — that is a hole in the audit, not a result.
-                observations[model] = {"error": errors or "no attempt completed"}
+                if starved:
+                    observations[model] = {
+                        "unmeasured": (
+                            f"{starved} 次尝试的可见正文被 token 上限挤空"
+                            "（finish_reason=length），没有可判读的内容"
+                        )
+                    }
+                else:
+                    observations[model] = {"error": errors or "no attempt completed"}
                 continue
 
             checked += 1

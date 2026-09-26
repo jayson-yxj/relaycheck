@@ -210,9 +210,8 @@ class PanelBillingProbe(Probe):
 
         result.data["endpoints"] = found
 
-        billing = found.get("/v1/sub2api/billing", {})
-        body = billing.get("body") if isinstance(billing, dict) else None
-        if isinstance(body, dict) and billing.get("status") == 200:
+        body = _json_body(found.get("/v1/sub2api/billing", {}))
+        if body is not None:
             scope = _dig(body, "billing_scope")
             multiplier = _dig(body, "effective_rate_multiplier") or _dig(
                 body, "resolved_rate_multiplier"
@@ -235,10 +234,21 @@ class PanelBillingProbe(Probe):
                 ),
             )
 
-        usage_body = _dig(found.get("/v1/usage", {}), "body")
+        usage_body = _json_body(found.get("/v1/usage", {}))
         margins = _extract_margins(usage_body)
-        reachable = [p for p, d in found.items() if "error" not in d]
+        # "Reachable" has to mean *this endpoint answered with a panel payload*.
+        # The old test — "``error`` is not in the entry" — counted every 404 and
+        # every HTML error page as a reachable panel, because ``get_json`` never
+        # raises on 4xx. An endpoint with no panel at all therefore came out as
+        # "probed 6 endpoints, 6 reachable" followed by bill-clean: it rendered
+        # "we measured nothing" as "verified fine", and left bill-202 — the
+        # honest "all panel endpoints unreachable" — permanently unreachable.
+        reachable = [p for p, d in found.items() if _json_body(d) is not None]
         result.data["endpoints_reachable"] = sorted(reachable)
+        # ``/health`` answers 200 on almost every deployment, panel or not, so it
+        # is not evidence that a *billing* panel exists and must not be the thing
+        # that licenses a verdict about billing.
+        billing_endpoints = [p for p in reachable if p != "/health"]
         if margins:
             result.data["per_model_margin"] = margins
             worst = max(margins, key=lambda m: m["markup_x"])
@@ -282,20 +292,23 @@ class PanelBillingProbe(Probe):
                     evidence={"per_model_margin": margins},
                     remediation="无需处理；该数据可用于对账与续费前的比价。",
                 )
-        elif reachable:
+        elif billing_endpoints:
             self._find(
                 result,
                 id="bill-clean",
-                title="面板可达，但未暴露上游成本",
+                title="面板可达，未公开上游成本（加价未能测算）",
                 severity=Severity.CLEAN,
                 confidence=Confidence.CONFIRMED,
                 summary=(
-                    f"探测了 {len(found)} 个面板端点，{len(reachable)} 个可达，"
-                    "但都没有同时给出 cost 与 account_cost，"
-                    "因此无法从平台自己的账上测算加价倍率。"
+                    f"探测了 {len(found)} 个面板端点，{len(billing_endpoints)} 个以 "
+                    "JSON 正常应答（/health 不计入），且读到的计费口径没有矛盾。"
+                    "但这些端点都没有同时给出 cost 与 account_cost，"
+                    "所以**加价倍率这一项没有被检验**——"
+                    "「没测到加价」不等于「没有加价」。"
                 ),
                 evidence={
                     "endpoints_reachable": sorted(reachable),
+                    "billing_endpoints": sorted(billing_endpoints),
                     "endpoints_probed": list(PANEL_PATHS),
                 },
             )
@@ -308,8 +321,9 @@ class PanelBillingProbe(Probe):
                 severity=Severity.INFO,
                 confidence=Confidence.CONFIRMED,
                 summary=(
-                    "所有面板端点都没有正常响应，既读不到计费口径，也读不到上游成本。"
-                    "这一项没有被检验。"
+                    "没有任何面板端点以 JSON 正常应答（404、HTML 错误页、连接失败"
+                    "都不算），既读不到计费口径，也读不到上游成本。这一项没有被检验——"
+                    "官方直连端点通常就是这种情况，它本身不是问题。"
                 ),
                 evidence={"endpoints_probed": found},
             )
@@ -357,6 +371,27 @@ def _trim(obj: Any, depth: int) -> Any:
     if isinstance(obj, str) and len(obj) > 300:
         return obj[:300] + "…"
     return obj
+
+
+def _json_body(entry: Any) -> dict[str, Any] | None:
+    """The JSON object *this* endpoint really returned, or ``None``.
+
+    ``RelayClient.get_json`` documents "never raises on 4xx", so a 404 arrives
+    here as an ordinary entry rather than an error, and a non-JSON body (an HTML
+    error page, a Cloudflare challenge) is wrapped as ``{"_raw_text": ...}`` —
+    which is itself a dict, so a bare ``isinstance(body, dict)`` test passes it.
+
+    Every caller that wants to read fields out of a panel response goes through
+    here, because "the endpoint answered 404" is not "the panel is present".
+    """
+    if not isinstance(entry, dict) or "error" in entry:
+        return None
+    if entry.get("status") != 200:
+        return None
+    body = entry.get("body")
+    if not isinstance(body, dict) or "_raw_text" in body:
+        return None
+    return body
 
 
 def _dig(obj: Any, *keys: str) -> Any:

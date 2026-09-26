@@ -65,6 +65,14 @@ _FACT_PROMPT = "What is 37 * 41? Reply with the number only."
 _FACT_ANSWER = "1517"
 _FACT_MAX_TOKENS = 1024
 
+#: Every number in a reply, thousands separators stripped. Used to compare the
+#: two paths' *answers* rather than their wording.
+_NUMBER_RE = re.compile(r"\d[\d,]*")
+
+
+def _numbers(text: str) -> list[str]:
+    return [m.replace(",", "") for m in _NUMBER_RE.findall(text or "")]
+
 
 class StreamProbe(Probe):
     name = "stream"
@@ -124,7 +132,17 @@ class StreamProbe(Probe):
             gaps = streamed.gaps()
             total = streamed.total_s or 0.0
             late = sum(g for g in gaps if g >= 0)
-            baseline = _compare_answers(plain.content, control.content)
+            # Reproducibility has to be *exact*, not "started the same way".
+            # ``_compare_answers`` tolerates a 90%-prefix difference so that a
+            # truncated stream still counts as the same answer; used as a
+            # reproducibility gate, that tolerance promotes two merely similar
+            # samples into "the station reproduces itself", and everything
+            # downstream then reads ordinary sampling noise as a stream/plain
+            # mismatch — a HIGH-severity false positive on an honest relay.
+            if _reproduces_itself(plain.content, control.content):
+                baseline = "match"
+            else:
+                baseline = _compare_answers(plain.content, control.content)
             record: dict[str, Any] = {
                 "chunks": streamed.chunk_count,
                 "ttft_s": round(streamed.ttft_s, 3) if streamed.ttft_s is not None else None,
@@ -146,7 +164,28 @@ class StreamProbe(Probe):
                 verdict = _compare_answers(streamed.text, plain.content)
                 record["verdict"] = verdict
                 record["basis"] = "open-ended"
-                if verdict == "mismatch":
+                if verdict == "mismatch" and (
+                    streamed.finish_reason == "length" or plain.budget_exhausted
+                ):
+                    # Both replies were cut off by *our* ``_MAX_TOKENS``. Where
+                    # the cut lands depends on how much hidden reasoning the
+                    # model spent, and a reasoning endpoint spends a different
+                    # amount on each call. A difference past the cap is the
+                    # cap's doing, not the station's.
+                    record["verdict"] = "truncated"
+                    unverifiable.append({
+                        "model": model,
+                        "reason": (
+                            "两条回复都被 max_tokens 截断"
+                            f"（streamed={streamed.finish_reason},"
+                            f" plain={plain.finish_reason}），"
+                            "截断点不同不构成证据"
+                        ),
+                        "open_ended_baseline": baseline,
+                        "streamed_sample": streamed.text[:120],
+                        "plain_sample": plain.content[:120],
+                    })
+                elif verdict == "mismatch":
                     mismatches.append({
                         "model": model,
                         "streamed_sample": streamed.text[:200],
@@ -180,29 +219,51 @@ class StreamProbe(Probe):
                     record["fallback_error"] = exc.describe(140)
                 else:
                     fact = _compare_answers(fact_stream.text, fact_plain.content)
-                    answered = _FACT_ANSWER in fact_stream.text and _FACT_ANSWER in fact_plain.content
+                    # ``answered`` must mean "both paths stated the one correct
+                    # answer", not "the string appears somewhere in both
+                    # replies". A reasoning model that streams ``1517`` on one
+                    # path and writes ``37 * 41 = 1517`` on the other has
+                    # *agreed*; a substring test paired with a 90%-prefix text
+                    # comparison called that a mismatch and escalated it to
+                    # HIGH. That was a false positive against an honest relay.
+                    ref_stream = _FACT_ANSWER in fact_stream.text
+                    ref_plain = _FACT_ANSWER in fact_plain.content
+                    answered = ref_stream and ref_plain
                     record["fallback"] = {
                         "prompt": _FACT_PROMPT,
                         "streamed_sample": fact_stream.text[:120],
                         "plain_sample": fact_plain.content[:120],
                         "verdict": fact,
                         "reference_answer_present": answered,
+                        "streamed_stated_reference": ref_stream,
+                        "plain_stated_reference": ref_plain,
                     }
-                    if fact == "mismatch" and answered:
-                        # One question, one correct answer, two paths, two
-                        # answers. Sampling cannot explain this.
+                    stream_nums = _numbers(fact_stream.text)
+                    plain_nums = _numbers(fact_plain.content)
+                    if answered:
+                        # Same question, one correct answer, both paths gave it.
+                        # Whatever prose surrounds it, the two paths agreed.
+                        record["verdict"] = "noisy_but_agreed"
+                    elif (
+                        fact == "mismatch"
+                        and stream_nums
+                        and plain_nums
+                        and not (set(stream_nums) & set(plain_nums))
+                    ):
+                        # Neither path stated the reference answer, and the
+                        # numbers each one volunteered have nothing in common.
+                        # One deterministic question, two disjoint answers —
+                        # sampling cannot explain that.
                         fact_mismatches.append({
                             "model": model,
                             "streamed_sample": fact_stream.text[:200],
                             "plain_sample": fact_plain.content[:200],
                             "prompt": _FACT_PROMPT,
                         })
-                    elif fact == "match" and answered:
-                        record["verdict"] = "noisy_but_agreed"
                     else:
-                        # The paths did not disagree on a question with one
-                        # answer, but we also did not get that answer back, so
-                        # nothing was verified.
+                        # The paths did not disagree in a way we can read, but we
+                        # also did not get the answer back, so nothing was
+                        # verified.
                         unverifiable.append({
                             "model": model,
                             "reason": "确定性问答未得到可判定的答案",
@@ -238,14 +299,27 @@ class StreamProbe(Probe):
                     "fallback": record.get("fallback"),
                 })
 
-            if not streamed.usage or streamed.usage.total_tokens is None:
+            if not streamed.usage.raw:
+                # Only a completely absent usage block counts as "no usage". A
+                # compat layer that reports Anthropic-shaped usage
+                # (``input_tokens``/``output_tokens`` and no ``total_tokens``)
+                # *is* reporting usage; calling that "流里没有 usage" would
+                # accuse an honest endpoint of leaving room for over-billing.
                 no_usage.append({"model": model, "chunks": streamed.chunk_count})
 
-            if streamed.chunk_count > 3 and total > 0 and late / total < _BURST_FRACTION:
+            # Measure the burst against the *generation* window, not the whole
+            # request. A reasoning endpoint spends 20-40 s thinking before the
+            # first visible token and then streams the answer in two seconds:
+            # against the full wall clock that ratio is ~0.05, so every such
+            # model would be reported as having buffered its output.
+            ttft = streamed.ttft_s
+            window = total - ttft if ttft is not None and 0 < ttft < total else total
+            if streamed.chunk_count > 3 and window > 0 and late / window < _BURST_FRACTION:
                 bursty.append({
                     "model": model,
                     "chunks": streamed.chunk_count,
                     "stream_span_s": round(late, 3),
+                    "generation_window_s": round(window, 3),
                     "total_s": round(total, 3),
                 })
 
@@ -476,3 +550,19 @@ def _compare_answers(a: str, b: str) -> str:
     if len(shorter) >= 0.9 * len(longer) and longer.startswith(shorter[: len(shorter)]):
         return "match"
     return "mismatch"
+
+
+def _reproduces_itself(a: str, b: str) -> bool:
+    """Whether two *identical* requests came back with the same answer.
+
+    Stricter than ``_compare_answers`` on purpose. That function's 90%-prefix
+    tolerance exists to absorb a stream cut short at the finish; as a
+    reproducibility gate the same tolerance would declare a station
+    reproducible whenever its two samples merely opened the same way, and every
+    later difference would then be reported as evidence. Reproducibility is an
+    exact property: same request, same answer, or we have no noise floor and
+    the comparison is unverifiable.
+    """
+    na = re.sub(r"\s+", " ", a).strip()
+    nb = re.sub(r"\s+", " ", b).strip()
+    return bool(na) and na == nb

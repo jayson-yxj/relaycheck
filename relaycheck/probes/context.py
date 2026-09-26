@@ -489,6 +489,18 @@ def _build_prompt(
 
 # ------------------------------------------------------------------- classify
 
+#: Ways a long-context model says "I could not find that marker". Such a reply
+#: has to be read as *talk about* the markers rather than as a list of the ones
+#: it received: the same sentence names the code it did see and the other one as
+#: absent, and a bare substring test reads that as "the head survived but the
+#: tail did not" — i.e. as proof that the front of the input was dropped before
+#: it ever reached the model. It is proof of nothing; it is a refusal.
+_MARKER_DENIAL_RE = re.compile(
+    r"CANNOT|CAN NOT|CAN'T|DO NOT SEE|DON'T SEE|NOT SEE|NOT FIND|UNABLE"
+    r"|MISSING|ABSENT|ONLY ONE|ONLY SEE|JUST ONE"
+    r"|只看到|只有一个|只出现|没看到|没有看到|看不到|无法|未见",
+)
+
 
 def _classify(
     completion: Completion, head: str, tail: str, depth: int, chars_sent: int
@@ -517,6 +529,15 @@ def _classify(
         # The model was cut off before it finished listing. We cannot tell a
         # dropped code from an unfinished answer, so this depth proves nothing.
         outcome["verdict"] = "cut_short"
+        return outcome
+
+    if _MARKER_DENIAL_RE.search(text):
+        # The reply is *talking about* the markers, not listing them. In that
+        # register a code quoted once cannot be told apart from a code named as
+        # missing, and the one-sided reading becomes "前段输入在到达模型之前就被
+        # 丢掉了，而计费仍按完整输入计算" — a HIGH-severity accusation built on a
+        # polite refusal. This depth proves nothing, and it must say so.
+        outcome["verdict"] = "denied"
         return outcome
 
     if saw_head or saw_tail:

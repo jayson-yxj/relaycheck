@@ -174,8 +174,28 @@ def count_tokens(text: str, variant: str) -> int:
 # --------------------------------------------------------------- http handler
 
 
+#: The panel endpoints ``relaycheck.probes.billing`` probes. Duplicated here on
+#: purpose: the mock has to be able to answer "this deployment has no panel at
+#: all", which is exactly what an official first-party endpoint looks like.
+_PANEL_PATHS = (
+    "/v1/sub2api/billing",
+    "/v1/usage",
+    "/api/v1/settings/public",
+    "/api/v1/model-plaza",
+    "/api/v1/setup/status",
+)
+
+
 class _State:
-    def __init__(self, scenario: str, api_key: str, verbose: bool = False) -> None:
+    def __init__(
+        self,
+        scenario: str,
+        api_key: str,
+        verbose: bool = False,
+        reasoning_tokens: int | None = None,
+        panel: bool = True,
+        throttle: bool = False,
+    ) -> None:
         self.scenario = scenario
         self.api_key = api_key
         self.verbose = verbose
@@ -196,7 +216,30 @@ class _State:
         #: reasoning model. With too small a ``max_tokens`` it returns hidden
         #: reasoning and *no* visible text. Nothing about it is fraudulent — it
         #: exists to prove relaycheck does not mistake "empty" for "different".
-        self.reasoning = scenario == "reasoning"
+        self.reasoning = scenario == "reasoning" or reasoning_tokens is not None
+        #: How many tokens the mocked reasoning backend burns before it starts
+        #: writing visible text. The stock value sits *below* relaycheck's retry
+        #: ceiling (``base.grow_budget``: ``max(60 * 4, 1024) == 1024``), so the
+        #: ``reasoning`` scenario always recovers on the retry and the probe is
+        #: expected to reach a real verdict. Raise it above 1024 and even the
+        #: grown budget is consumed by thinking, so *every* attempt comes back
+        #: with no visible text — a hole in the audit, never evidence against
+        #: the relay.
+        self.reasoning_tokens = (
+            _REASONING_TOKENS if reasoning_tokens is None else int(reasoning_tokens)
+        )
+        #: ``panel=False`` makes every billing-panel path answer 404, which is
+        #: what an official first-party endpoint does: it has no sub2api panel,
+        #: no usage API, no model plaza. It exists to prove that "there is no
+        #: panel here" is reported as "nothing was measured" and never as CLEAN.
+        self.panel = panel
+        #: ``throttle=True`` makes the gateway answer every chat request with 429.
+        #: That is exactly what an official first-party API does when we probe it
+        #: every 0.4 s: it is working *correctly* and telling us to slow down. It
+        #: exists to prove relaycheck does not report 「极不稳定」 for our own
+        #: pacing, and does not report 「可用性正常」 for a run in which nothing
+        #: succeeded either.
+        self.throttle = throttle
         #: The ``noisy`` scenario models an honest relay whose backend cannot
         #: repeat itself: the same request at ``temperature=0`` twice gives two
         #: different answers. Nothing is dropped and nothing is swapped — the
@@ -319,6 +362,13 @@ def _make_handler(state: _State) -> type[BaseHTTPRequestHandler]:
                 })
                 return
 
+            if not state.panel and path in _PANEL_PATHS:
+                # An official first-party endpoint has no billing panel at all:
+                # these paths do not exist and answer 404. relaycheck has to read
+                # that as "nothing was measured", never as "no problem found".
+                self._send_json(404, {"error": "not found"})
+                return
+
             if path == "/v1/sub2api/billing":
                 self._send_json(200, {
                     "object": "sub2api.key_billing",
@@ -385,6 +435,21 @@ def _make_handler(state: _State) -> type[BaseHTTPRequestHandler]:
             if not self._authorised():
                 self._send_json(401, {"code": "INVALID_API_KEY", "message": "Invalid API key"})
                 return
+            if state.throttle:
+                # A healthy endpoint under a probe that fires every 0.4 s. The
+                # honest reading is neither 「中转站极不稳定」 nor 「可用性正常」 —
+                # it is "we did not manage to measure this".
+                self._send_json(
+                    429,
+                    {
+                        "error": {
+                            "message": "Rate limit reached for requests",
+                            "type": "requests",
+                            "code": "rate_limit_exceeded",
+                        }
+                    },
+                )
+                return
             if state.dead:
                 # The panel is up and the key is valid, but the gateway cannot
                 # serve a single completion. This is the "everything is broken"
@@ -442,10 +507,10 @@ def _make_handler(state: _State) -> type[BaseHTTPRequestHandler]:
             if state.reasoning:
                 budget = body.get("max_tokens")
                 budget = int(budget) if isinstance(budget, (int, float)) else None
-                starved = budget is not None and budget <= _REASONING_TOKENS
+                starved = budget is not None and budget <= state.reasoning_tokens
                 reasoning = {
                     "reasoning_content": _REASONING_SAMPLE * 6,
-                    "reasoning_tokens": budget if starved else _REASONING_TOKENS,
+                    "reasoning_tokens": budget if starved else state.reasoning_tokens,
                 }
                 if starved:
                     answer = ""
@@ -846,9 +911,35 @@ class _MockRelayServer(ThreadingHTTPServer):
 
 
 def serve(
-    port: int, scenario: str, api_key: str = TEST_API_KEY, verbose: bool = False
+    port: int,
+    scenario: str,
+    api_key: str = TEST_API_KEY,
+    verbose: bool = False,
+    reasoning_tokens: int | None = None,
+    panel: bool = True,
+    throttle: bool = False,
 ) -> ThreadingHTTPServer:
-    state = _State(scenario, api_key, verbose)
+    """Start the mock relay on ``port``.
+
+    ``reasoning_tokens`` switches the reasoning backend on for *any* scenario and
+    sets how much of the budget it burns before writing visible text. Pass a
+    value above 1024 to model a thinking model that eats even relaycheck's
+    *grown* retry budget, so that no attempt ever returns readable text.
+
+    ``panel=False`` makes every billing-panel path answer 404, which is what an
+    official first-party endpoint looks like.
+
+    ``throttle=True`` makes every chat request come back 429, which is what an
+    official first-party endpoint does when a probe hits it every 0.4 s.
+    """
+    state = _State(
+        scenario,
+        api_key,
+        verbose,
+        reasoning_tokens=reasoning_tokens,
+        panel=panel,
+        throttle=throttle,
+    )
     return _MockRelayServer(("127.0.0.1", port), _make_handler(state))
 
 
