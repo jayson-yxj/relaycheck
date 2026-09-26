@@ -344,7 +344,12 @@ CI rather than by hand.
 
 ### No Python? A Windows desktop build
 
-For people who do not want to touch a terminal. The repo ships a PyInstaller build script:
+For people who do not want to touch a terminal. **Download
+`relaycheck-<version>-windows-x64.zip` from the Releases page, unzip it, and double-click
+`relaycheck-desktop\relaycheck-gui.exe`** — the target machine needs no Python and no
+terminal.
+
+To build it yourself, the repo ships a PyInstaller build script:
 
 ```powershell
 .\gui\build.ps1        # creates .venv-build, produces dist\relaycheck-desktop\
@@ -648,6 +653,7 @@ examples/
 .github/workflows/
   ci.yml               3.9 / 3.11 / 3.13 on Linux, plus one Windows and one macOS leg
   release.yml          Trusted Publishing to PyPI on a tag (no credentials in the repo)
+  desktop.yml          Builds the desktop zip on a Windows runner and attaches it to the Release
 SECURITY.md            Security boundaries, what a report does and does not contain, how to report
 CHANGELOG.md           Behavioural changes, especially finding-id and severity semantics
 RELEASING.md           For maintainers: one-time setup and the release steps

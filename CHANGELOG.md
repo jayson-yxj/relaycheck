@@ -24,6 +24,29 @@
 而 `relaycheck.cli` 里到处是 `print()`；给引擎单独一个控制台子系统的 exe 从根上解决，
 两者共用同一个 `COLLECT`，体积不翻倍。
 
+### 新增：Windows 桌面版直接在 Release 下载（`.github/workflows/desktop.yml`）
+
+给不装 Python 的人一个 zip：打 `v*` tag 时在 `windows-latest` 上构建，跑一遍
+`gui/e2e_bundle.py` 确认产物真的能跑（不然发布的只是一个 30 MB 的压缩包），再把
+`relaycheck-<版本>-windows-x64.zip`（实测 14 MB）挂到 Release 页。解压 → 打开
+`relaycheck-desktop\` → 双击 `relaycheck-gui.exe`。
+
+刻意和 `release.yml` 分成两个工作流、互不依赖：往 PyPI 发布需要先在 pypi.org 配好
+trusted publisher，而「PyPI 还没配好」绝不能连带让用户下不到一个能跑的 exe。
+发布前想先拿一个：Actions → desktop → Run workflow，产物在 Artifacts。
+
+### 修正：版本号只有一个来源
+
+`pyproject.toml` 里写死的 `version` 和 `relaycheck/__init__.py` 里的 `__version__` 是两个
+事实来源，而 `relaycheck --version`、报告里的 `tool_version`、GUI 标题读的都是后者。两边
+一旦漂移，wheel 会以新版本号传上去、`relaycheck --version` 却还印旧号，而 `release.yml`
+里那道「tag 与构建版本一致」的检查看的是 wheel 文件名，正好拦不住这种。
+
+改成 `dynamic = ["version"]` 加
+`[tool.setuptools.dynamic] version = {attr = "relaycheck.__version__"}`：以后发布只改
+`relaycheck/__init__.py` 一处。实测把关起来的 `__version__` 临时改成 `9.9.9`，构建出来的
+就是 `relaycheck-9.9.9-py3-none-any.whl`。
+
 ### 修正：frozen 程序不认 `PYTHONIOENCODING`
 
 打包后的 exe 在管道/重定向下**按 GBK 输出中文**，即使父进程已经设了

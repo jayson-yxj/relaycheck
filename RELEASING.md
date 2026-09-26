@@ -36,7 +36,8 @@ PyPI 凭据。没有东西可以泄漏，也没有东西需要定期轮换。
 
 ## 每次发布
 
-1. 改 `pyproject.toml` 里的 `version`。
+1. 改 `relaycheck/__init__.py` 里的 `__version__` —— 这是唯一的版本号来源，
+   `pyproject.toml` 用 `dynamic = ["version"]` 从这里读，不用（也不要）另改一处。
 2. 在 `CHANGELOG.md` 里加一节，把那句「未发布」改成实际日期。
 3. 确认 `main` 上这条提交的 CI 是**绿的** —— 打 tag 不会触发 `ci.yml`（它只在分支和 PR 上跑），
    所以 tag 有可能指向一条从没被测试过的提交。
@@ -49,6 +50,23 @@ PyPI 凭据。没有东西可以泄漏，也没有东西需要定期轮换。
 
 5. `release.yml` 会构建 sdist + wheel、跑 `twine check`、校验 **tag 和构建出来的版本号一致**，
    然后才上传。任何一步不过就是红灯，不会发出半成品。
+
+## 同一个 tag 还会做什么
+
+推 `v*` 会同时触发 **`desktop.yml`**：在 `windows-latest` 上构建桌面版、跑一遍
+`gui/e2e_bundle.py` 确认产物真的能跑，然后把 `relaycheck-<版本>-windows-x64.zip` 挂到
+这次 tag 对应的 **GitHub Release**（Release 由它创建，不在 `release.yml` 里）。
+
+两者**互不依赖**，这是刻意的：PyPI 的 trusted publisher 没配好、或者 PyPI 挂了，都不该
+让用户下不到 exe；反过来桌面构建失败也不该挡住 pip 用户。所以：
+
+* 只想先出个 exe 给不会 pip 的人 → Actions → **desktop** → Run workflow。
+  这条手动路径不推 PyPI，产物在同一次运行的 Artifacts 里。
+* 只发 PyPI → 正常打 tag，桌面那条腿红了也不影响 `release.yml` 的结果。
+
+`desktop.yml` 不校验 tag 与版本号是否一致（它不做不可逆的事），但如果 tag 和
+`pyproject.toml` 里的版本对不上，zip 的文件名会跟着 `relaycheck/__init__.py` 走，
+和 tag 不一致 —— 看到这种不一致，说明第 1 步漏了。
 
 ## 不可逆
 

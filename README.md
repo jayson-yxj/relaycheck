@@ -298,7 +298,11 @@ python -m relaycheck.cli --help
 
 ### 不装 Python：Windows 桌面版
 
-给完全不想碰命令行的人一个能双击的东西。仓库里带一套 PyInstaller 打包脚本：
+给完全不想碰命令行的人一个能双击的东西。**从 Releases 页下载
+`relaycheck-<版本>-windows-x64.zip`，解压，双击 `relaycheck-desktop\relaycheck-gui.exe`**
+—— 目标机器不用装 Python，也不用碰命令行。
+
+想自己构建的话，仓库里带一套 PyInstaller 打包脚本：
 
 ```powershell
 .\gui\build.ps1        # 自建 .venv-build，产出 dist\relaycheck-desktop\
@@ -600,6 +604,7 @@ examples/
 .github/workflows/
   ci.yml               3.9 / 3.11 / 3.13 × Linux，外加 Windows 与 macOS 各一条腿
   release.yml          打 tag 时经 Trusted Publishing 发到 PyPI（仓库里不存任何凭据）
+  desktop.yml          打 tag 时在 Windows runner 上构建桌面版 zip 并挂到 Release
 SECURITY.md            安全边界、报告里有什么、怎么报漏洞
 CHANGELOG.md           行为变更，尤其是 finding id 与严重程度的语义变化
 RELEASING.md           给维护者看：一次性配置与发布步骤

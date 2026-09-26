@@ -1,0 +1,77 @@
+name: desktop
+
+# 构建 Windows 桌面版（dist/relaycheck-desktop）并把 zip 挂到 GitHub Release。
+#
+# 刻意和 release.yml 分开：往 PyPI 发布需要在 pypi.org 上配好 trusted publisher，
+# 而「PyPI 还没配好」绝不能连带让用户下不到一个能跑的 exe。两个工作流不共享状态，
+# 任一失败都不影响另一个。
+#
+# 手动触发：Actions -> desktop -> Run workflow。
+# 用户拿到的是什么：zip 解压 -> relaycheck-desktop\ -> 双击 relaycheck-gui.exe。
+# 目标机器不需要装 Python。
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows-x64:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # build.ps1 自己会否掉没有 tkinter 的解释器，但在这里先打印一次能让失败原因
+      # 一眼可见 —— runner 镜像换掉 Python 发行版时，就是这一行先红。
+      - name: Check the runner interpreter has tcl/tk
+        shell: pwsh
+        run: python -c "import sys, tkinter; print(sys.version); print('tk', tkinter.TkVersion)"
+
+      - name: Build the bundle
+        shell: pwsh
+        run: .\gui\build.ps1
+
+      # 打包产物必须真的能跑，不然发布的只是一个 30 MB 的压缩包。用本地 mock 中转站
+      # 把源码 CLI、引擎 exe、窗口 exe 的 --run-audit 通道跑同一份审计并逐字段比对。
+      - name: Run one audit through all three runners
+        shell: pwsh
+        run: .venv-build\Scripts\python.exe gui\e2e_bundle.py
+
+      - name: Zip it
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ver = (Select-String -Path relaycheck\__init__.py -Pattern '__version__\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          $zip = "dist\relaycheck-$ver-windows-x64.zip"
+          # 连目录一起压，解压出来就是一个文件夹，而不是把 30 MB 散在下载目录里。
+          Compress-Archive -Path dist\relaycheck-desktop -DestinationPath $zip -CompressionLevel Optimal
+          $mb = (Get-Item $zip).Length / 1MB
+          Write-Host ("{0}  {1:N1} MB" -f $zip, $mb)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: relaycheck-desktop-windows-x64
+          path: dist/*.zip
+          if-no-files-found: error
+
+      - name: Attach it to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
+          generate_release_notes: true
+          body: |
+            不装 Python 的用法：下载下面的 zip，解压，双击 `relaycheck-desktop\relaycheck-gui.exe`。
+
+            **首次运行会被 SmartScreen 拦**（未做代码签名）：点「更多信息」→「仍要运行」。
+            杀软误报的原因和应对见 `gui/README.md`。
+
+            会用命令行的人不需要这个包：`pip install relaycheck`。

@@ -18,7 +18,24 @@
 | `relaycheck.exe` | 控制台程序，**GUI 只用它来跑审计**，不用手动开 |
 | `_internal\` | Python 运行时、tcl/tk、requests —— **必须跟着一起拷，缺了 exe 起不来** |
 
-打包本机实测 **29.7 MB**（整个目录），两个 exe 各约 2.6 MB。
+打包本机实测 **29.7 MB**（整个目录），两个 exe 各约 2.6 MB；压成 zip 约 **14 MB**。
+
+---
+
+## 怎么发给别人
+
+两条路，按对方会不会用命令行分。
+
+**一、从 GitHub Release 下载（推荐，对方什么都不用装）。**
+打 `v*` tag 时 `.github/workflows/desktop.yml` 会在 `windows-latest` 上构建、跑一遍
+`gui\e2e_bundle.py`，然后把 `relaycheck-<版本>-windows-x64.zip` 挂到 Release 页。
+对方解压 → 打开 `relaycheck-desktop\` → 双击 `relaycheck-gui.exe`。
+
+想在发布前先拿一个：Actions → desktop → Run workflow，产物在同一次运行的 Artifacts 里。
+这个工作流和 `release.yml`（PyPI）**互相独立** —— PyPI 那边没配好，不影响 exe 的下载。
+
+**二、自己构建**：`.\gui\build.ps1`（见下）。sdist 里也带着 `gui/`，所以只有源码包的人
+同样能构建，不用克隆仓库。
 
 ---
 

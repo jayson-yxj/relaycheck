@@ -4,7 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "relaycheck"
-version = "0.1.0"
+# 单一事实来源：relaycheck/__init__.py 里的 __version__。写死在这里就会有两个版本号，
+# 而 cli.py 的 --version 和报告里的 tool_version 读的是那一个 —— 两边一旦漂移，wheel
+# 会以 0.1.1 的名字传上去、`relaycheck --version` 却还印 0.1.0，而 release.yml 里那道
+# 「tag 与构建版本一致」的检查（它看的是 wheel 文件名）拦不住这种。
+dynamic = ["version"]
 description = "Audit OpenAI-compatible LLM relay/proxy endpoints for model substitution, billing fraud, and capability degradation."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -41,6 +45,9 @@ Homepage = "https://github.com/jayson-yxj/relaycheck"
 Repository = "https://github.com/jayson-yxj/relaycheck"
 Issues = "https://github.com/jayson-yxj/relaycheck/issues"
 Changelog = "https://github.com/jayson-yxj/relaycheck/blob/main/CHANGELOG.md"
+
+[tool.setuptools.dynamic]
+version = { attr = "relaycheck.__version__" }
 
 [tool.setuptools.packages.find]
 include = ["relaycheck*"]
