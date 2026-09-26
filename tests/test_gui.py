@@ -710,6 +710,42 @@ def test_the_build_script_survives_a_chinese_locale_windows_powershell() -> None
     raw[3:].decode("utf-8")
 
 
+def test_the_sdist_carries_every_file_the_desktop_build_reads() -> None:
+    """``gui/`` rides along in the sdist, so anything the spec reads has to ride too.
+
+    0.1.4 shipped an sdist whose ``gui/`` had no ``.ico`` and no ``.png``, because
+    MANIFEST.in only listed ``*.py *.ps1 *.spec *.md``. That is not a cosmetic loss:
+    ``relaycheck_gui.spec`` hands both paths to PyInstaller, and a missing icon makes
+    it raise ``FileNotFoundError: Icon input file ... not found`` — at the very end,
+    after the expensive analysis. Nobody with only that sdist could build the exe.
+
+    This test is about the *manifest*, not about the files: the icons exist either way.
+    """
+    # Not guarded by _need_gui(): it reads text, so it must keep guarding everywhere.
+    manifest = (ROOT / "MANIFEST.in").read_text(encoding="utf-8")
+    line = next(
+        (
+            ln
+            for ln in manifest.splitlines()
+            if ln.strip().startswith("recursive-include gui")
+        ),
+        "",
+    )
+    assert line, "MANIFEST.in 里没有 recursive-include gui —— gui/ 根本不会进 sdist"
+    patterns = set(line.split()[2:])
+    spec = (ROOT / "gui" / "relaycheck_gui.spec").read_text(encoding="utf-8")
+    for name in ("relaycheck.ico", "relaycheck.png"):
+        asset = ROOT / "gui" / name
+        assert asset.is_file(), f"缺文件：{asset}"
+        # If the spec stops referencing it, this assertion is guarding nothing and
+        # should be deleted along with the reference.
+        assert name in spec, f"spec 已经不引用 gui/{name} 了，这条断言该一起删掉"
+        assert f"*{asset.suffix}" in patterns, (
+            f"MANIFEST.in 的 `recursive-include gui` 没覆盖 *{asset.suffix}，"
+            f"sdist 里会缺 gui/{name}（构建 exe 会直接失败）"
+        )
+
+
 # --------------------------------------------------------------------- runner
 
 

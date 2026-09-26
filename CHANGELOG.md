@@ -3,6 +3,33 @@
 本文件记录**行为**的变化，尤其是「严重程度」和「finding id」的语义变化——
 一个已经发布过的 finding id 尽量不重用；如果它的含义变了，这里必须写明。
 
+## [0.1.5] — 2026-09-27
+
+### 修正：0.1.4 的 sdist 缺了两个图标文件，从源码包构建 exe 会直接失败
+
+`MANIFEST.in` 里那行是 `recursive-include gui *.py *.ps1 *.spec *.md` —— 没有 `*.ico`。
+于是 PyPI 上 `relaycheck-0.1.4.tar.gz` 的 `gui/` 里有 `build.ps1`、有 spec，**唯独没有
+`relaycheck.ico` 和 `relaycheck.png`**。
+
+这不是少了个图标。`relaycheck_gui.spec` 把这两个路径直接交给 PyInstaller，而图标路径不存在时
+PyInstaller 抛的是：
+
+```
+File "PyInstaller/building/icon.py", line 34, in normalize_icon_type
+    raise FileNotFoundError(f"Icon input file {icon_path} not found")
+FileNotFoundError: Icon input file D:/.../gui/relaycheck.ico not found
+```
+
+—— 而且是在 `Copying icon to EXE` 那一步，前面几十秒的分析全白做。所以在 0.1.4 的 sdist 上
+`gui/build.ps1` **一个 exe 也产不出来**。受影响的范围说明白：wheel 不含 `gui/`
+（`include = ["relaycheck*"]`），pip 用户不受影响；受影响的是「下源码包自己 build」那条路，
+而那正是 `gui/README.md` 承诺过的路。本仓库 Release 上的 exe 是用仓库源码构建的，不走 sdist，
+所以 Release 里的 0.1.4 是好的。
+
+**测试**：`tests/test_gui.py` 新增 `test_the_sdist_carries_every_file_the_desktop_build_reads`
+（19 → 20）—— 读 `MANIFEST.in` 的 `recursive-include gui` 那行，断言 spec 引用到的每个资产
+后缀都在里面。验证过「把那行改回只有 `*.md` 即失败」。
+
 ## [0.1.4] — 2026-09-27
 
 这一版改的全是**桌面版和构建脚本**，都在 `gui/` 下 —— 而 `gui/` 不进 wheel

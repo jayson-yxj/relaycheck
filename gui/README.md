@@ -18,7 +18,7 @@
 | `relaycheck.exe` | 控制台程序，**GUI 只用它来跑审计**，不用手动开 |
 | `_internal\` | Python 运行时、tcl/tk、requests —— **必须跟着一起拷，缺了 exe 起不来** |
 
-打包本机实测 **29.7 MB**（整个目录，988 个文件），两个 exe 分别 2.70 MB / 2.69 MB，
+打包本机实测 **29.6 MB**（整个目录，989 个文件），两个 exe 分别 2.68 MB / 2.66 MB，
 其余是 Python 运行时、tcl/tk、OpenSSL 和 requests；压成 zip 约 **14–15 MB**
 （本机构建 14.2 MB，GitHub Release 上构建出来的 15.0 MB —— 两边 PyInstaller 版本略有差异）。
 
@@ -36,8 +36,25 @@
 想在发布前先拿一个：Actions → desktop → Run workflow，产物在同一次运行的 Artifacts 里。
 这个工作流和 `release.yml`（PyPI）**互相独立** —— PyPI 那边没配好，不影响 exe 的下载。
 
-**二、自己构建**：`.\gui\build.ps1`（见下）。sdist 里也带着 `gui/`，所以只有源码包的人
-同样能构建，不用克隆仓库。
+**二、自己构建**：`.\gui\build.ps1`（见下）。sdist 里也带着 `gui/`（含图标文件），所以只有源码包的人
+同样能构建，不用克隆仓库。`tests\test_gui.py` 里有一条测试专门钉住这件事 —— 0.1.4 的 sdist
+就是因为漏了两个图标文件而**完全构建不出来**。
+
+---
+
+## 图标是生成出来的，不是画出来的
+
+`gui/make_icon.py` 从源码里的几何参数生成 `relaycheck.ico`（16/24/32/48/64/128/256 七档）和
+`relaycheck.png`（Tk 的 `iconphoto` 读不了 ico，窗口那一侧要用 png）。改了设计就重跑它，
+不要手改这两个二进制文件。
+
+设计上只有两条硬约束，写在生成器的 docstring 里：**必须活过 16px** —— 资源管理器的小图标视图
+和小任务栏用的就是这一档，只在 256px 好看的那叫插画；以及**不能被读成又一个安全盾牌**。
+放大镜和双向箭头两版都是在 16px 上被淘汰的。
+
+`relaycheck_gui.spec` 里两个 exe 都设了 `icon=`，png 额外进 `datas` 供窗口使用。
+**这两个文件必须进 sdist**（`MANIFEST.in` 的 `recursive-include gui` 覆盖了 `*.ico *.png`）：
+图标路径不存在时 PyInstaller 抛的是 `FileNotFoundError`，不是退化成没图标，而是根本构建不出来。
 
 ---
 
@@ -130,8 +147,8 @@ PyInstaller 的 bootloader 和 tcl/tk 在非 ASCII 路径上出过问题，历�
 
 分两层，都不碰真站。
 
-**`tests\test_gui.py`** —— 12 项，不需要构建产物，CI 的五条腿都会跑（没有 tkinter
-的机器，比如 headless Linux runner，会干净地 skip 掉）。它钉的是界面自己决定的三件事：
+**`tests\test_gui.py`** —— 20 项，不需要构建产物，CI 的五条腿都会跑（没有 tkinter
+的机器，比如 headless Linux runner，会干净地 skip 掉）。它钉的是界面自己决定的东西：
 
 * **key 绝不进命令行。** 把 `subprocess.Popen` 换掉，真的跑一次
   `AuditProcess.start()`，然后检查 argv 和 env —— 一个命令行嗅探器能看到的东西。
@@ -139,6 +156,13 @@ PyInstaller 的 bootloader 和 tcl/tk 在非 ASCII 路径上出过问题，历�
 * **结论卡片不能和 reporter 跑偏。** 五个 verdict 字符串是从
   `reporter.Report.verdict` 的源码里读出来的，改词就会红，而不是默默渲染出一张没
   颜色没解释的卡片。
+* **进度条上的数必须是 CLI 报过的。** 拿真实的进度行喂进去，断言条只走到已完成的项，
+  中途停止不会被补满；顺手钉住「花钱提醒是粗体且不在按钮行」。
+* **图标真的挂上了。** 直接解析 ICO 头校验七档尺寸，不依赖 Pillow（CI 只装
+  `requests` + `pytest`）。
+* **构建脚本和 sdist 的两个环境坑。** `build.ps1` 必须有 UTF-8 BOM；`MANIFEST.in` 必须
+  覆盖 spec 引用到的每种资产后缀。这两条在 CI 的 en-US runner 上都**不会**报错，
+  所以只能这样钉死。
 
 ```powershell
 python tests\test_gui.py

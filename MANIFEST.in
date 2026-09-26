@@ -18,4 +18,10 @@ recursive-include examples *.md
 # The Windows desktop build is source, not package data: it is not importable and
 # nothing in relaycheck/ touches it. It rides along so that someone with only the
 # sdist can still build the exe instead of cloning the repository.
-recursive-include gui *.py *.ps1 *.spec *.md
+#
+# *.ico / *.png are load-bearing here, not decoration. relaycheck_gui.spec points
+# `icon=` and `datas=` straight at gui/relaycheck.ico and gui/relaycheck.png, and
+# PyInstaller raises FileNotFoundError — after doing all the expensive analysis —
+# when an icon path does not exist. Omitting them does not produce an icon-less
+# exe; it produces no exe at all, which is how 0.1.4's sdist shipped.
+recursive-include gui *.py *.ps1 *.spec *.md *.ico *.png
