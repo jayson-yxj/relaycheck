@@ -120,6 +120,17 @@ _SEVERITY_FILL: dict[str, tuple[str, str]] = {
 #: as inactive next to a white-on-colour filled chip.
 _SEVERITY_EMPTY_FG = "#78716c"
 
+#: The 高级 disclosure, closed and open. The panel holds three settings that are
+#: all already correct for the overwhelming majority of runs, and it costs about a
+#: third of the form's height to show them. Closed by default is the point — the
+#: title says 不确定就别动, so a window that shows it anyway is arguing with itself.
+_ADV_CLOSED = "▸ 高级（不确定就别动）"
+_ADV_OPEN = "▾ 高级（不确定就别动）"
+
+#: The line that says the log pane can be dragged. Only ever seen, never clicked:
+#: the draggable part is the sash just above it.
+_SASH_HINT = "#b8b8b8"
+
 #: Vendor → colour. Colouring the *self-reported* family is the whole point of the
 #: tinting: two models that both answer "I was created by OpenAI" light up the same
 #: colour, which is what makes the stock-boilerplate tell visible at a glance
@@ -443,6 +454,18 @@ class RelayCheckApp:
         root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._apply_icon()
 
+        # A vertical pane split so the log can be dragged taller. The form has a
+        # fixed height and the log is the only thing here that grows without bound,
+        # so on a small window the log is what gets squeezed — and the log is where
+        # the evidence lands.
+        #
+        # Both panes exist before anything packs into them: ``PanedWindow.add``
+        # sizes a pane from its child, so the child has to be in the tree first.
+        self.paned = ttk.PanedWindow(root, orient="vertical")
+        self.paned.pack(fill="both", expand=True)
+        self.top = ttk.Frame(self.paned)
+        self.paned.add(self.top, weight=1)
+
         self._build_header()
         self._build_form()
         self._build_controls()
@@ -454,6 +477,13 @@ class RelayCheckApp:
             "填上中转站地址和 API Key，点「开始检测」就行。\n"
             "模型那一栏可以留空 —— 留空会自动从 /v1/models 里挑几个不同厂商的来对比。\n"
         )
+        # The divider can only be placed once the paned window has been laid out.
+        # Called from here it is a silent no-op: ``sashpos`` accepts the number,
+        # discards it because the widget is 1px tall, and the window then opens with
+        # the top pane — the entire form — collapsed to nothing while the log holds
+        # the whole window. So it goes on the first real layout instead, once.
+        self._sash_placed = False
+        self.paned.bind("<Configure>", self._on_paned_configure)
 
     def _apply_icon(self) -> None:
         path = _icon_path("png")
@@ -487,7 +517,7 @@ class RelayCheckApp:
     # ------------------------------------------------------------------ widgets
 
     def _build_header(self) -> None:
-        head = ttk.Frame(self.root, padding=(16, 14, 16, 4))
+        head = ttk.Frame(self.top, padding=(16, 14, 16, 4))
         head.pack(fill="x")
         ttk.Label(
             head, text=f"relaycheck 桌面版 {__version__}",
@@ -501,7 +531,7 @@ class RelayCheckApp:
         ).pack(anchor="w", pady=(2, 0))
 
     def _build_form(self) -> None:
-        box = ttk.LabelFrame(self.root, text="目标", padding=(12, 8, 12, 12))
+        box = ttk.LabelFrame(self.top, text="目标", padding=(12, 8, 12, 12))
         box.pack(fill="x", padx=16, pady=(8, 0))
         box.columnconfigure(1, weight=1)
 
@@ -581,20 +611,31 @@ class RelayCheckApp:
         )
 
         # ------------------------------------------------------------- advanced
+        # Collapsed by default. These three settings have correct defaults for
+        # nearly every run, and showing them costs a third of the form's height —
+        # height that the result card needs as soon as a run comes back with
+        # family lines in it.
         r += 1
-        adv = ttk.LabelFrame(box, text="高级（不确定就别动）", padding=(10, 6, 10, 8))
-        adv.grid(row=r, column=0, columnspan=3, sticky="ew", pady=(8, 0))
+        self.adv_open = tk.BooleanVar(value=False)
+        self.adv_toggle = ttk.Button(box, text=_ADV_CLOSED, command=self._toggle_advanced)
+        self.adv_toggle.grid(row=r, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
-        ttk.Label(adv, text="检测强度").grid(row=0, column=0, sticky="w", padx=(0, 10))
+        self.adv_panel = ttk.Frame(box, padding=(14, 6, 0, 0))
+        self.adv_panel.grid(row=r + 1, column=0, columnspan=3, sticky="ew")
+
+        ttk.Label(self.adv_panel, text="检测强度").grid(
+            row=0, column=0, sticky="w", padx=(0, 10)
+        )
         ttk.Radiobutton(
-            adv, text="标准（默认 8 项探针）", value="default", variable=self.strength_var
+            self.adv_panel, text="标准（默认 8 项探针）", value="default",
+            variable=self.strength_var,
         ).grid(row=0, column=1, sticky="w")
         ttk.Radiobutton(
-            adv, text="全面（全部 11 项，请求数明显更多、更慢）",
+            self.adv_panel, text="全面（全部 11 项，请求数明显更多、更慢）",
             value="all", variable=self.strength_var,
         ).grid(row=0, column=2, sticky="w")
 
-        nums = ttk.Frame(adv)
+        nums = ttk.Frame(self.adv_panel)
         nums.grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
         ttk.Label(nums, text="最多测几个模型").pack(side="left")
         ttk.Spinbox(nums, from_=1, to=20, width=4, textvariable=self.maxmodels_var).pack(
@@ -605,8 +646,10 @@ class RelayCheckApp:
         ttk.Label(nums, text="每项探针预算(秒)").pack(side="left")
         ttk.Entry(nums, width=6, textvariable=self.budget_var).pack(side="left", padx=(6, 0))
 
+        self.adv_panel.grid_remove()
+
     def _build_controls(self) -> None:
-        bar = ttk.Frame(self.root, padding=(16, 10, 16, 4))
+        bar = ttk.Frame(self.top, padding=(16, 10, 16, 4))
         bar.pack(fill="x")
 
         self.start_btn = ttk.Button(bar, text="开始检测", command=self._start)
@@ -631,7 +674,7 @@ class RelayCheckApp:
         # and the same weight as everything else, so the one line on screen that
         # costs money was also the easiest to ignore. It gets its own row directly
         # under the button it warns about, in bold.
-        warn = ttk.Frame(self.root, padding=(16, 0, 16, 4))
+        warn = ttk.Frame(self.top, padding=(16, 0, 16, 4))
         warn.pack(fill="x")
         ttk.Label(
             warn,
@@ -652,7 +695,7 @@ class RelayCheckApp:
         return rule
 
     def _build_verdict(self) -> None:
-        self.card = tk.Frame(self.root, bd=1, relief="solid", background="#eeeeee")
+        self.card = tk.Frame(self.top, bd=1, relief="solid", background="#eeeeee")
         self.card.pack(fill="x", padx=16, pady=(6, 0))
 
         # ---- 结论
@@ -715,20 +758,45 @@ class RelayCheckApp:
         self.family_text.pack(fill="x", padx=12, pady=(0, 10))
         self.family_text.configure(state="disabled")
 
-        # Nothing has been measured yet, so neither section has anything true to
-        # say. A row of six zeros would read as "we measured zero problems", which
-        # is a claim this window has not earned.
-        self._set_sections(show_chips=False, show_family=False)
+        # ---- 动作
+        # On the card and not only in the toolbar: the verdict is the thing someone
+        # wants to send to the vendor, and the moment they want it is the moment
+        # they are reading it. The toolbar button stays as the way to reach the
+        # folder before any run has produced one.
+        self.action_section = tk.Frame(self.card, background="#eeeeee")
+        self.action_section.pack(fill="x")
+        self.action_rule = self._add_rule(self.action_section)
+        actions = tk.Frame(self.action_section, background="#eeeeee")
+        actions.pack(anchor="w", padx=12, pady=(8, 10))
+        self.copy_btn = ttk.Button(actions, text="复制结论", command=self._copy_card)
+        self.copy_btn.pack(side="left")
+        self.card_open_btn = ttk.Button(
+            actions, text="打开报告", command=self._open_out_dir
+        )
+        self.card_open_btn.pack(side="left", padx=(8, 0))
+        self.copy_hint = tk.Label(
+            actions, text="", background="#eeeeee", foreground="#6b7280",
+            font=("Microsoft YaHei UI", 9),
+        )
+        self.copy_hint.pack(side="left", padx=(10, 0))
 
-    def _set_sections(self, show_chips: bool, show_family: bool) -> None:
-        """Show or hide the two lower sections, preserving their order.
+        # Nothing has been measured yet, so none of these sections has anything
+        # true to say. A row of six zeros would read as "we measured zero
+        # problems", which is a claim this window has not earned.
+        self._set_sections(show_chips=False, show_family=False, show_actions=False)
+
+    def _set_sections(
+        self, show_chips: bool, show_family: bool, show_actions: bool = False
+    ) -> None:
+        """Show or hide the card's lower sections, preserving their order.
 
         ``pack`` always appends, so the order has to be re-established by hand —
         otherwise a second run could come back with the family clue sitting above
-        the problem counts.
+        the problem counts, or the buttons above both of them.
         """
         self.chips_section.pack_forget()
         self.family_section.pack_forget()
+        self.action_section.pack_forget()
         if show_family:
             self.family_section.pack(fill="x")
         if show_chips:
@@ -736,14 +804,66 @@ class RelayCheckApp:
                 self.chips_section.pack(fill="x", before=self.family_section)
             else:
                 self.chips_section.pack(fill="x")
+        if show_actions:
+            self.action_section.pack(fill="x")
 
     def _build_log(self) -> None:
-        wrap = ttk.LabelFrame(self.root, text="运行日志", padding=(8, 6, 8, 8))
-        wrap.pack(fill="both", expand=True, padx=16, pady=(8, 14))
+        # A pane takes no padding of its own, so the margins the log used to get
+        # from ``pack`` live in a plain frame that is itself the pane. No top margin
+        # on that frame: the hairline below has to land on the divider, and the log
+        # frame brings its own gap.
+        outer = ttk.Frame(self.paned, padding=(16, 0, 16, 14))
+        self.paned.add(outer, weight=3)
+        # Under this theme the sash is painted in the same colour as everything
+        # around it, so an untouched divider is invisible and nobody finds out the
+        # log can be pulled taller. This is the entire affordance.
+        self.sash_hint = tk.Frame(outer, height=2, background=_SASH_HINT)
+        self.sash_hint.pack(fill="x")
+        self.log_wrap = ttk.LabelFrame(outer, text="运行日志", padding=(8, 6, 8, 8))
+        self.log_wrap.pack(fill="both", expand=True, pady=(8, 0))
         self.log = ScrolledText(
-            wrap, wrap="word", height=14, font=("Consolas", 9), state="disabled"
+            self.log_wrap, wrap="word", height=14, font=("Consolas", 9), state="disabled"
         )
         self.log.pack(fill="both", expand=True)
+
+    # ------------------------------------------------------------------- the sash
+
+    def _on_paned_configure(self, event: tk.Event) -> None:
+        """Place the divider the first time the paned window has a real size."""
+        if self._sash_placed or event.height <= 1:
+            return
+        self._sash_placed = True
+        self._reset_sash()
+
+    def _reset_sash(self) -> None:
+        """Put the divider where the form ends.
+
+        Without this the log opens at whatever height ttk guessed from the two
+        panes' requested sizes, which on a tall window is usually most of it.
+        """
+        try:
+            self.paned.sashpos(0, self.top.winfo_reqheight())
+        except tk.TclError:
+            pass
+
+    def _fit_sash(self) -> None:
+        """Never let the divider clip the card.
+
+        The card grows once a run comes back with family lines in it, and a divider
+        dragged up on an empty card would cut them off. A clipped family block is
+        worse than no block at all: it reads as if that were everything there was.
+        Only ever pushes the divider *down*, so a deliberate choice is left alone.
+        """
+        self.top.update_idletasks()
+        # Read once: the value moves while the pane is being laid out, and comparing
+        # against one reading while setting another lets the divider land past the
+        # content it was supposed to fit.
+        need = self.top.winfo_reqheight()
+        try:
+            if self.paned.sashpos(0) < need:
+                self.paned.sashpos(0, need)
+        except tk.TclError:
+            pass
 
     # ------------------------------------------------------------------ helpers
 
@@ -757,6 +877,25 @@ class RelayCheckApp:
 
     def _toggle_key(self) -> None:
         self.key_entry.configure(show="" if self.show_key.get() else "●")
+
+    def _toggle_advanced(self) -> None:
+        """Open or close the 高级 panel.
+
+        ``grid_remove`` and not ``grid_forget``: remove remembers the grid options,
+        so the panel comes back on its own row with its own span instead of the
+        position having to be written down twice and drift apart.
+        """
+        opening = not self.adv_open.get()
+        self.adv_open.set(opening)
+        if opening:
+            self.adv_panel.grid()
+        else:
+            self.adv_panel.grid_remove()
+        self.adv_toggle.configure(text=_ADV_OPEN if opening else _ADV_CLOSED)
+        # Opening the panel makes the pane taller, and the divider does not move on
+        # its own: the card below would silently lose its bottom row — the 「复制结论」
+        # button — to a pane edge the user never touched.
+        self._fit_sash()
 
     def _pick_outdir(self) -> None:
         chosen = filedialog.askdirectory(title="选择报告输出目录")
@@ -783,9 +922,11 @@ class RelayCheckApp:
         for widget in (self.start_btn, self.fetch_btn):
             widget.configure(state=state)
         self.stop_btn.configure(state="normal" if running else "disabled")
-        self.open_btn.configure(
-            state="normal" if (self.last_out_dir and self.last_out_dir.is_dir()) else "disabled"
-        )
+        # Both open buttons follow the same rule: there is exactly one report
+        # directory, so two buttons disagreeing about whether it exists is a bug.
+        can_open = bool(self.last_out_dir and self.last_out_dir.is_dir())
+        for button in (self.open_btn, self.card_open_btn):
+            button.configure(state="normal" if can_open else "disabled")
 
     def _set_progress(self, done: int, total: int) -> None:
         if total > 0:
@@ -829,7 +970,10 @@ class RelayCheckApp:
         chips = {id(chip) for chip in self.chips.values()}
 
         def paint(widget: tk.Misc) -> None:
-            if id(widget) not in chips:
+            # ttk widgets take their colours from the theme rather than from us, and
+            # the plain buttons on the action row are ttk. Leaving them alone is the
+            # point: ``ttk.Separator`` was rejected for the same reason.
+            if id(widget) not in chips and not widget.winfo_class().startswith("T"):
                 try:
                     widget.configure(background=bg)
                 except tk.TclError:
@@ -838,7 +982,7 @@ class RelayCheckApp:
                 paint(child)
 
         paint(self.card)
-        for rule in (self.chips_rule, self.family_rule):
+        for rule in (self.chips_rule, self.family_rule, self.action_rule):
             rule.configure(background=_shade(bg, 0.9))
 
     def _fill_family(self, rows: Sequence[tuple[str, str, str]]) -> None:
@@ -886,8 +1030,8 @@ class RelayCheckApp:
         widget.configure(state="disabled")
 
     def _card_text(self) -> str:
-        """The whole card as plain text — the handle tests assert on, and what a
-        future 「复制结论」 button will hand over.
+        """The whole card as plain text — the handle the tests assert on, and the
+        body of what 「复制结论」 hands over.
 
         The card is a dozen widgets now; asserting on thirteen separate ``cget``
         calls would pin the layout instead of the content. Sections that are
@@ -910,12 +1054,51 @@ class RelayCheckApp:
                 parts.append(content)
         return "\n".join(part for part in parts if part)
 
+    def _clipboard_text(self) -> str:
+        """What 「复制结论」 hands over.
+
+        The card on its own lands in a chat with no idea which relay it is about or
+        when it ran, which is the difference between a complaint someone can act on
+        and a screenshot. The footer is assembled from the URL field and the report
+        path only — never from the key field — so this window cannot leak the
+        secret even by accident. ``_card_text`` stays footer-free so the tests keep
+        asserting on the card itself.
+        """
+        parts = [self._card_text()]
+        footer: list[str] = []
+        url = self.url_var.get().strip()
+        if url:
+            footer.append(f"站点：{url}")
+        if self.last_out_dir and (self.last_out_dir / "report.json").is_file():
+            footer.append(f"报告：{self.last_out_dir}")
+        if footer:
+            footer.append(f"工具：relaycheck 桌面版 {__version__}")
+            parts.append("——\n" + "\n".join(footer))
+        return "\n".join(part for part in parts if part)
+
+    def _copy_card(self) -> None:
+        self.root.clipboard_clear()
+        self.root.clipboard_append(self._clipboard_text())
+
+        def clear() -> None:
+            try:
+                self.copy_hint.configure(text="")
+            except tk.TclError:
+                pass
+
+        # Said out loud, because a copy button that looks like it did nothing is a
+        # button people press twice and then stop trusting. Cleared again so the
+        # confirmation cannot be mistaken for the state of the next card.
+        self.copy_hint.configure(text="已复制到剪贴板")
+        self.root.after(2500, clear)
+
     def _show_card(
         self,
         verdict: str,
         detail: str,
         counts: dict[str, int] | None,
         family_rows: Sequence[tuple[str, str, str]] | None = None,
+        actions: bool = False,
     ) -> None:
         fg, bg, _ = VERDICT_STYLE.get(verdict, ("#333333", "#eeeeee", ""))
         self._tint(bg)
@@ -938,9 +1121,10 @@ class RelayCheckApp:
         rows = list(family_rows or ())
         # Sections first, then content: the family Text sizes itself from its own
         # laid-out width, and a widget that is still unpacked has none.
-        self._set_sections(bool(counts), bool(rows))
+        self._set_sections(bool(counts), bool(rows), actions)
         self._fill_family(rows)
         self.root.update_idletasks()
+        self._fit_sash()
 
     def _open_out_dir(self) -> None:
         if not (self.last_out_dir and self.last_out_dir.is_dir()):
@@ -1117,7 +1301,7 @@ class RelayCheckApp:
                 # the difference between "the relay is clean" and "we stopped it".
                 detail = ("检测被中断，报告没写出来。没有报告不代表中转站有问题，"
                           "也不代表没问题 —— 只代表这次没查完。")
-            self._show_card("运行失败", detail, None)
+            self._show_card("运行失败", detail, None, actions=True)
             self.verdict_label.configure(foreground=fg)
             self.card.configure(background=bg)
             return
@@ -1130,7 +1314,7 @@ class RelayCheckApp:
         if findings:
             worst = findings[0]
             top = f"\n最严重的一条：{worst.get('id', '')}  {worst.get('title', '')}"
-        self._show_card(verdict, plain + top, counts, _family_rows(report))
+        self._show_card(verdict, plain + top, counts, _family_rows(report), actions=True)
         self._log("")
         self._log(f"报告：{self.last_out_dir / 'report.md'}")
         self._log(f"原始：{self.last_out_dir / 'report.json'}")

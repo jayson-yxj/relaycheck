@@ -951,6 +951,211 @@ def test_the_sdist_carries_every_file_the_desktop_build_reads() -> None:
         )
 
 
+# --------------------------------------------- disclosure, handover, and panes
+
+
+def test_the_advanced_panel_starts_closed_and_keeps_its_settings() -> None:
+    """Hiding three settings is only honest if they keep the values they had.
+
+    The panel holds the run's cost knobs: probe strength, how many models, the
+    per-request timeout, the request budget. If closing it reset any of them, the
+    disclosure would be quietly rewriting the thing it is hiding — and the window
+    would spend someone's quota on settings they never chose.
+    """
+    if not _need_gui():
+        return
+    root = _tk_root()
+    if root is None:
+        _skip("no display available")
+        return
+    try:
+        app = G.RelayCheckApp(root)
+        assert app.adv_panel.grid_info() == {}, "高级面板应该默认收起"
+        assert str(app.adv_toggle["text"]) == G._ADV_CLOSED, app.adv_toggle["text"]
+        assert app.strength_var.get() == "default", app.strength_var.get()
+
+        app.strength_var.set("all")
+        app.maxmodels_var.set("9")
+        app._toggle_advanced()
+        assert app.adv_panel.grid_info() != {}, "点开之后面板应该露出来"
+        assert str(app.adv_toggle["text"]) == G._ADV_OPEN, app.adv_toggle["text"]
+        assert (app.strength_var.get(), app.maxmodels_var.get()) == ("all", "9")
+
+        app._toggle_advanced()
+        assert app.adv_panel.grid_info() == {}, "再点一次应该收回去"
+        assert str(app.adv_toggle["text"]) == G._ADV_CLOSED, app.adv_toggle["text"]
+        assert (app.strength_var.get(), app.maxmodels_var.get()) == ("all", "9"), (
+            "收起高级面板不能把里面的设置改回默认值"
+        )
+    finally:
+        root.update_idletasks()
+
+
+def test_the_handover_buttons_only_appear_once_there_is_a_conclusion() -> None:
+    """「复制结论」 on the 正在检测… card would copy a sentence that says nothing.
+
+    So it is not always-on chrome. It shows on a card that carries a result, and
+    that includes the failure card: a run that broke is exactly the run whose
+    output someone needs to paste into a bug report.
+    """
+    if not _need_gui():
+        return
+    root = _tk_root()
+    if root is None:
+        _skip("no display available")
+        return
+    try:
+        app = G.RelayCheckApp(root)
+        assert app.action_section.winfo_manager() == "", "启动时不该有交付按钮"
+
+        app._show_card("正在检测…", "已启动，输出会实时显示在下面。", None)
+        assert app.action_section.winfo_manager() == "", "还没出结果就没有结论可复制"
+
+        app._show_card("运行失败", "退出码 2。", None, actions=True)
+        assert app.action_section.winfo_manager() == "pack", "失败卡也要能复制结论去报 bug"
+        assert app.card.pack_slaves()[-1] is app.action_section, "交付按钮应该落在卡片最后一行"
+    finally:
+        root.update_idletasks()
+
+
+def test_the_copy_button_never_hands_over_the_api_key() -> None:
+    """The one control here that writes to a shared, persistent place.
+
+    Every other path keeps the key inside the process. A clipboard is readable by
+    any program on the machine and outlives the window, so the text this button
+    produces is the one place the key must never reach. The footer it does add is
+    asserted too: a copied conclusion with no idea which station produced it is not
+    something anyone can act on.
+    """
+    if not _need_gui():
+        return
+    root = _tk_root()
+    if root is None:
+        _skip("no display available")
+        return
+    secret = "sk-do-not-copy-me-0123456789"
+    try:
+        app = G.RelayCheckApp(root)
+        app.key_var.set(secret)
+        app.url_var.set("https://api.example.com")
+        app.last_out_dir = None
+        app._show_card("未检测到问题", "说明", {"info": 2}, None, actions=True)
+        app._copy_card()
+
+        try:
+            text = root.clipboard_get()
+        except Exception as exc:  # noqa: BLE001 - a bare CI box has no clipboard owner
+            _skip(f"clipboard unavailable: {exc}")
+            return
+
+        assert secret not in text, "API Key 进了剪贴板"
+        assert "未检测到问题" in text, text
+        assert "https://api.example.com" in text, f"复制出来的结论没说是哪个站：{text}"
+        assert G.APP_TITLE in text, text
+        assert str(app.copy_hint["text"]) == "已复制到剪贴板", "按了没反应会被当成按坏"
+    finally:
+        root.update_idletasks()
+
+
+def test_both_open_the_report_buttons_agree_on_whether_there_is_a_report() -> None:
+    """Two buttons, one report directory. Disagreeing is the one impossible state.
+
+    The toolbar button is the entry point before a run, the one on the card is the
+    entry point while reading a result. They read the same directory, so a state
+    where one is clickable and the other is grey is a state that cannot be true —
+    and a directory deleted between runs is not openable either.
+    """
+    if not _need_gui():
+        return
+    root = _tk_root()
+    if root is None:
+        _skip("no display available")
+        return
+    try:
+        app = G.RelayCheckApp(root)
+        for out_dir, expected in (
+            (None, "disabled"),
+            (ROOT, "normal"),
+            (ROOT / "_no_such_report_dir_here", "disabled"),
+        ):
+            app.last_out_dir = out_dir
+            app._set_running(False)
+            assert str(app.open_btn["state"]) == expected, (out_dir, app.open_btn["state"])
+            assert str(app.card_open_btn["state"]) == expected, (
+                out_dir,
+                app.card_open_btn["state"],
+            )
+    finally:
+        root.update_idletasks()
+
+
+def test_the_log_pane_is_draggable_and_says_so() -> None:
+    """Under this theme ttk paints the sash the same colour as the window around it.
+
+    So the divider ships invisible: it works, and nobody finds out it is there. The
+    hairline at the top of the log pane is therefore load-bearing rather than
+    decoration, and the second pane is asserted because a PanedWindow holding one
+    pane is a Frame that costs more.
+    """
+    if not _need_gui():
+        return
+    root = _tk_root()
+    if root is None:
+        _skip("no display available")
+        return
+    try:
+        app = G.RelayCheckApp(root)
+        assert len(app.paned.panes()) == 2, app.paned.panes()
+        assert app.sash_hint.winfo_manager() == "pack", "分隔线没显示，日志可拖这件事就没人知道"
+        assert str(app.sash_hint["background"]) == G._SASH_HINT, app.sash_hint["background"]
+        assert app.sash_hint.master is app.log_wrap.master, "分隔线得跟日志在同一格里"
+        assert G._SASH_HINT != "#f0f0f0", "这跟主题底色一样，等于没画"
+    finally:
+        root.update_idletasks()
+
+
+def test_the_divider_is_placed_after_the_form_and_not_on_top_of_it() -> None:
+    """``sashpos`` before the window is mapped is accepted and then thrown away.
+
+    That is how the first version of this shipped: the sash stayed at 0, the top
+    pane — the whole form, 开始检测 included — collapsed to nothing, and the log
+    took the entire window. No exception, no warning, just a window with its
+    controls missing. The placement has to wait for the first real layout.
+    """
+    if not _need_gui():
+        return
+    root = _tk_root()
+    if root is None:
+        _skip("no display available")
+        return
+    import tkinter as tk
+
+    # A Toplevel rather than the shared root: this one needs to actually get mapped,
+    # and mapping the long-lived root would map every app stacked on it.
+    top = tk.Toplevel(root)
+    try:
+        app = G.RelayCheckApp(top)
+        # Reproduce the original failure exactly: the form is measured, and the
+        # divider is placed from that measurement, all while the paned window is
+        # still 1px tall. ttk accepts the call, cannot honour it, and settles on 0
+        # for good — it does not re-derive the position when the window is mapped.
+        top.update_idletasks()
+        app._reset_sash()
+        top.update()
+        if app.paned.winfo_height() <= 1:
+            _skip("the paned window never got a size")
+            return
+        need = app.top.winfo_reqheight()
+        assert app.paned.sashpos(0) >= need, (
+            f"分界线压在表单上：sash={app.paned.sashpos(0)}，表单要 {need}"
+        )
+        assert app.start_btn.winfo_ismapped(), "开始检测按钮被分界线挤出可视区了"
+        assert app.log.winfo_ismapped(), "日志区没被布局"
+    finally:
+        top.update_idletasks()
+        top.destroy()
+
+
 # --------------------------------------------------------------------- runner
 
 
