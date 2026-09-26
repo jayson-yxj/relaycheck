@@ -5,6 +5,30 @@
 
 ## [未发布]
 
+### 新增：报告记录受测模型的**来源池**与选型依据
+
+`report.json` 原来只有一个 `models_available_count`（数字）、一个 `models_tested`（受测清单），
+以及一条只打到控制台的选型说明。于是一份报告能告诉你「测了 2 个模型」，却看不出这 2 个是从
+什么里挑出来的、为什么是这 2 个——而**选型是整场审计里唯一一个判断，不是一个测量**。测量错了
+可以回去复核原始数据，判断错了在产物里根本看不见。
+
+现在：
+
+- `report.json` 新增 `models_available`（`/v1/models` 返回的完整清单）与
+  `selection: {"mode": ..., "rationale": ...}`；原来的 `models_available_count` 保留不动，
+  已有的下游读法不受影响。
+- `report.md` 增加「选型」一行与选型依据，并把完整可选池放进一个折叠块。
+- 控制台报告增加「选型」「选型依据」两行。
+
+`mode` 为 `auto` 表示模型是按**厂商多样性**挑的（`selection.select_models`：每个声称的厂商
+先出一个代表，而不是取列表前 N 个）；`explicit` 表示操作者用 `--models` 直接指定。
+
+**测试**：`tests/test_mock_relay.py` 新增
+`test_an_explicit_model_list_still_records_the_pool_it_came_from`（显式指定时同样要记下池子），
+并把 `test_model_autodiscovery_runs_without_models_flag` 扩到断言完整池、`selection` 两块、
+以及 markdown 里的池子。两条都验证过「把修复回退即失败」（回退后
+`KeyError: 'models_available'`）。
+
 ## [0.1.2] — 2026-09-26
 
 这一版几乎是单一主题：**不再冤枉诚实站**。最早的几处是把「测不出来」「把厂商认错」

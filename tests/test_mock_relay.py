@@ -834,9 +834,93 @@ def test_model_autodiscovery_runs_without_models_flag() -> None:
             "可用模型数不是 /v1/models 返回的个数："
             f"{report['models_available_count']} != {len(mock_relay.CLEAN_MODELS)}"
         )
+        assert sorted(report["models_available"]) == sorted(mock_relay.CLEAN_MODELS), (
+            "report.json 只写了可用模型的数量，没有写下可选池本身，"
+            f"读者无法判断受测的两个是从什么里挑出来的：{report.get('models_available')!r}"
+        )
+        assert report["selection"] == {
+            "mode": "auto",
+            "rationale": "gpt-4o[openai], claude-3-5-sonnet[anthropic]",
+        }, report["selection"]
+
+        markdown = (Path(tmp) / "report.md").read_text(encoding="utf-8")
+        assert "deepseek-chat" in markdown, (
+            "markdown 报告没有列出端点声明的全部模型——人读的那一份看不到选型依据"
+        )
         assert "受测 2 个: gpt-4o[openai], claude-3-5-sonnet[anthropic]" in stdout, (
             f"进度行没有报出实际选择：\n{stdout}"
         )
+    finally:
+        server.close()
+
+
+def test_an_explicit_model_list_still_records_the_pool_it_came_from() -> None:
+    """``--models`` names the targets; it does not remove the question of the pool.
+
+    ``available_models`` was fetched from ``/v1/models`` on every run and then
+    only its **count** reached ``report.json``. So a reader saw "2 models tested"
+    without seeing the models those two were drawn from, or why they were those
+    two — and choosing what to test is the one step in an audit that is a
+    judgement call rather than a measurement. The judgement is the part that has
+    to be visible in the artefact, or the report cannot be argued with.
+
+    The auto path is covered by ``test_model_autodiscovery_runs_without_models_flag``;
+    this one pins the branch where the operator named the models, because that is
+    the branch where the pool is least obviously needed and most likely to be
+    dropped.
+    """
+    import json
+    import os
+    import subprocess
+    import tempfile
+
+    server = _Server("clean")
+    tmp = tempfile.mkdtemp(prefix="relaycheck-explicit-selection-")
+    try:
+        env = dict(os.environ)
+        env["PYTHONIOENCODING"] = "utf-8"
+        env.pop("RELAYCHECK_API_KEY", None)
+        env.pop("OPENAI_API_KEY", None)
+        root = Path(__file__).resolve().parent.parent
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "relaycheck.cli",
+                "-u",
+                server.base_url,
+                "-k",
+                mock_relay.TEST_API_KEY,
+                "-m",
+                "deepseek-chat",
+                "--probes",
+                "reliability",
+                "--reliability-samples",
+                "2",
+                "--delay",
+                "0",
+                "--out-dir",
+                tmp,
+            ],
+            cwd=str(root),
+            env=env,
+            capture_output=True,
+            timeout=180,
+        )
+        stderr = proc.stderr.decode("utf-8", "replace")
+        assert "Traceback" not in stderr, f"显式指定模型时 CLI 抛异常：\n{stderr}"
+        assert proc.returncode == 0, f"exit={proc.returncode}\n{stderr}"
+
+        report = json.loads((Path(tmp) / "report.json").read_text(encoding="utf-8"))
+        assert report["models_tested"] == ["deepseek-chat"], report["models_tested"]
+        assert sorted(report["models_available"]) == sorted(mock_relay.CLEAN_MODELS), (
+            "用 --models 指定目标后，可选池被丢掉了："
+            f"{report.get('models_available')!r}"
+        )
+        assert report["selection"] == {
+            "mode": "explicit",
+            "rationale": "deepseek-chat[deepseek]",
+        }, report["selection"]
     finally:
         server.close()
 
@@ -1206,6 +1290,7 @@ def test_a_reasoning_model_that_stops_at_the_cap_is_credited() -> None:
 def _main() -> int:
     checks = [
         test_model_autodiscovery_runs_without_models_flag,
+        test_an_explicit_model_list_still_records_the_pool_it_came_from,
         test_fraudulent_relay_is_caught,
         test_fraudulent_relay_reports_markup,
         test_params_detects_all_ignored_parameters,

@@ -57,6 +57,13 @@ class Report:
     target: str
     models: list[str] = field(default_factory=list)
     available_models: list[str] = field(default_factory=list)
+    #: ``auto`` (we picked for family diversity) or ``explicit`` (``--models``).
+    #: Choosing which models to test is the one step in an audit that is a
+    #: judgement call rather than a measurement, so a report that lists only what
+    #: was tested cannot be re-derived and cannot be argued with. Both the pool we
+    #: chose from and the reason for the choice belong in the artefact.
+    selection_mode: str = ""
+    selection_rationale: str = ""
     probe_names: list[str] = field(default_factory=list)
     results: list[ProbeResult] = field(default_factory=list)
     tool_version: str = ""
@@ -109,7 +116,12 @@ class Report:
             "duration_s": round(self.duration_s, 3),
             "requests_made": self.requests_made,
             "models_tested": self.models,
+            "models_available": list(self.available_models),
             "models_available_count": len(self.available_models),
+            "selection": {
+                "mode": self.selection_mode,
+                "rationale": self.selection_rationale,
+            },
             "probes": self.probe_names,
             "verdict": self.verdict,
             "severity_counts": self.counts,
@@ -142,6 +154,9 @@ def render_text(report: Report) -> str:
     lines.append(f"探针        : {', '.join(report.probe_names)}")
     lines.append(f"可用模型数  : {len(report.available_models)}")
     lines.append(f"受测模型    : {', '.join(report.models) or '(无)'}")
+    if report.selection_mode or report.selection_rationale:
+        lines.append(f"选型        : {report.selection_mode or '(未记录)'}")
+        lines.append(f"选型依据    : {report.selection_rationale or '(未记录)'}")
     for note in report.notes:
         lines.append(f"备注        : {note}")
     lines.append("")
@@ -220,7 +235,23 @@ def render_markdown(report: Report) -> str:
     md.append(f"| 探针 | {', '.join(report.probe_names)} |")
     md.append(f"| 可用模型数 | {len(report.available_models)} |")
     md.append(f"| 受测模型 | {', '.join(f'`{m}`' for m in report.models) or '(无)'} |")
+    if report.selection_mode:
+        md.append(f"| 选型 | {report.selection_mode} |")
     md.append("")
+    if report.selection_rationale:
+        md.append(f"选型依据：`{report.selection_rationale}`")
+        md.append("")
+    if report.available_models:
+        md.append(
+            f"<details><summary>端点声明的全部可用模型（{len(report.available_models)} 个，"
+            "受测模型即从此列表选出）</summary>"
+        )
+        md.append("")
+        for name in report.available_models:
+            md.append(f"- `{name}`")
+        md.append("")
+        md.append("</details>")
+        md.append("")
     for note in report.notes:
         md.append(f"> 备注：{note}")
     if report.notes:

@@ -271,11 +271,13 @@ def _run(argv: Sequence[str] | None = None) -> int:
         if unknown:
             notes.append(f"以下模型不在 /v1/models 返回中，仍会尝试：{', '.join(unknown)}")
         models = explicit[: max(1, args.max_models)]
+        selection_mode = "explicit"
     else:
         if not available:
             print("错误：没有可用模型，且未指定 --models", file=sys.stderr)
             return EXIT_ERROR
         models = select_models(available, max(1, args.max_models))
+        selection_mode = "auto"
 
     if not models:
         print("错误：没有可审计的模型", file=sys.stderr)
@@ -359,6 +361,8 @@ def _run(argv: Sequence[str] | None = None) -> int:
         target=client.base_url,
         models=models,
         available_models=available,
+        selection_mode=selection_mode,
+        selection_rationale=describe_selection(models),
         probe_names=[p.name for p in probes],
         results=results,
         tool_version=__version__,
