@@ -18,7 +18,8 @@
 | `relaycheck.exe` | 控制台程序，**GUI 只用它来跑审计**，不用手动开 |
 | `_internal\` | Python 运行时、tcl/tk、requests —— **必须跟着一起拷，缺了 exe 起不来** |
 
-打包本机实测 **29.7 MB**（整个目录），两个 exe 各约 2.6 MB；压成 zip 约 **14 MB**。
+打包本机实测 **29.7 MB**（整个目录，988 个文件），两个 exe 分别 2.70 MB / 2.69 MB，
+其余是 Python 运行时、tcl/tk、OpenSSL 和 requests；压成 zip 约 **14 MB**。
 
 ---
 
