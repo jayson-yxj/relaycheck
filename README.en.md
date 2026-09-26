@@ -496,15 +496,94 @@ make accusations you cannot support.
 
 1. **Same tokenizer ≠ same weights.** It only proves same family. Behavioural comparison is required.
 2. **Identical behaviour may be caching, not a swap.** The canary probe exists to separate the two.
-3. **Model self-reports are unreliable.** Models hallucinate their own identity, and a non-OpenAI model answering "OpenAI" is extremely common (it is what the training data is full of) — and it happens **on honest stations too**: in a live run, an ordinary relay reselling `deepseek-v4-flash` had that model claim OpenAI on both rounds. So `id-100` is an `INFO` *suspected* finding whose title literally says "a lead, not a conclusion": it only records *what the model says it is*, and `tokenizer` / `twins` produce the actual verdict. It has gone MEDIUM → LOW → INFO for one and the same reason: **something that cannot carry an accusation does not belong in the accusation column**, or every honest station reselling DeepSeek collects a LOW. There is also a second gate: **a self-report counts only if the model says it twice.** When a model names a foreign vendor, the probe asks the same question again; only a second answer naming the same foreign vendor yields `id-100`, and an inconsistent answer is downgraded to `id-101` (INFO, worded to say **it accuses no one of a swap**).
+3. **Model self-reports are unreliable.** Models hallucinate their own identity, and a non-OpenAI model answering "OpenAI" is extremely common (it is what the training data is full of). **This is not a relay's defect; official endpoints do it too**: on `api.deepseek.com`, `deepseek-flash` answers "I'm ChatGPT, powered by OpenAI's GPT-5" every time. So `id-100` is an `INFO` *suspected* finding whose title literally says "a lead, not a conclusion": it only records *what the model says it is*, and `tokenizer` / `twins` produce the actual verdict. It has gone MEDIUM → LOW → INFO for one and the same reason: **something that cannot carry an accusation does not belong in the accusation column**, or every honest station reselling DeepSeek collects a LOW. There is also a second gate: **a self-report counts only if the model says it twice.** When a model names a foreign vendor, the probe asks the same question again; only a second answer naming the same foreign vendor yields `id-100`, and an inconsistent answer is downgraded to `id-101` (INFO, worded to say **it accuses no one of a swap**).
 4. **An ignored parameter may just be a compatibility-layer defect**, not necessarily malice. The report distinguishes these (`params-100` MEDIUM / `params-101` INFO).
-5. **Some models may not support certain capabilities** (e.g. `logprobs`, `tools`). Probes record "explicit error" separately from "silently ignored" — the former is a compatibility gap, the latter is deception.
+5. **Some models may not support certain capabilities** (e.g. `logprobs`, `tools`). Probes record "explicit error" separately from "silently ignored" — the former is a compatibility gap, the latter is deception. Measured on the official endpoint: `deepseek-flash` returns 400 for `n` and `tools` outright, so those errors cannot be billed to a relay.
 6. **Requests consume your credit.** The full probe set is roughly 210 requests across 6 models. Start with `--probes echo,tokenizer,twins` — `echo` costs two requests per model and is the cheapest hard check in the box.
 7. **Rate limiting may prevent some probes from completing.** Probes report "could not run" honestly and never treat a crash as a pass.
 8. **Reasoning models write hidden reasoning first and visible text second.** With too small a `max_tokens`, the visible content comes back empty, `finish_reason` is `length`, and `reasoning_content` holds a long block. **An empty reply is not evidence**: probes retry once with a larger budget before comparing anything, and a check that still has nothing to judge is recorded as "not checked" (`params-103` / `stream-103` / `*-000`) — never as "the parameter was ignored" or "the two paths disagree". This one was added after being burned: on a real, honest relay this exact shape produced one false HIGH and one false MEDIUM.
-9. **An unreproducible station cannot be accused by comparison.** Some backends (MoE routing, batching) are non-deterministic even at `temperature=0`: the same request twice returns two different texts. In that situation "the streamed answer differs from the plain answer" and "two identical calls differed" are both **what noise looks like**. Probes measure the floor first; failing that they fall back to a deterministic question, and if even that cannot be judged they report `stream-104` / `params-104` — both INFO, and both worded to say **they accuse no one**. Writing that noise up as HIGH or MEDIUM is the same error in two different disguises. This one also comes from that real, honest station: it is what we hit immediately after fixing the reasoning-model empty replies.
+9. **An unreproducible station cannot be accused by comparison.** Some backends (MoE routing, batching) are non-deterministic even at `temperature=0`: the same request twice returns two different texts. In that situation "the streamed answer differs from the plain answer" and "two identical calls differed" are both **what noise looks like**. Probes measure the floor first; failing that they fall back to a deterministic question, and if even that cannot be judged they report `stream-104` / `params-104` — both INFO, and both worded to say **they accuse no one**. Writing that noise up as HIGH or MEDIUM is the same error in two different disguises. This one also comes from that real, honest station: it is what we hit immediately after fixing the reasoning-model empty replies. **It was later confirmed on the official endpoint: non-reproducibility at `temperature=0` is upstream behaviour**, and the relay is simply forwarding it.
 10. **`ctx-clean` is only a lower bound.** It proves that input arrived intact up to the deepest rung tested, not that the advertised context length holds. Raise `--context-sizes` to go deeper — at the cost of longer, more expensive requests.
 11. **The `model` field in a response is not testimony.** The station fills it in: it can be forged, rewritten into the sales name, or left empty. So a cross-vendor conflict is only *likely* (`echo-100`), and it is one of three mutually independent observations — read it alongside `twins` and `tokenizer`. The real value of this probe points the other way: because it exists, `echo-clean` is emitted only when **both** paths produced a comparable answer. Anything less is `echo-000` INFO.
+
+---
+
+## Validation record
+
+The one genuinely fatal error for a tool like this is a **false positive**: a single `HIGH`
+fired at an honest station destroys the whole report, because the accused only has to show
+that one line is wrong for the correct lines to be discarded with it. This project is
+therefore accepted on **zero false positives**, not on detection rate.
+
+### Gold standard: an official first-party endpoint
+
+`https://api.deepseek.com` — a first-party endpoint with no relay in the path. The two models
+it sells (`deepseek-flash`, `deepseek-v4-pro`) are exactly the models relays resell under those
+same names, so the comparison is direct. All 11 probes, 243.6 s / 134 requests:
+
+| Metric | Result |
+|---|---|
+| Exit code | `0` |
+| Verdict | no problem detected |
+| CRITICAL / HIGH / MEDIUM / LOW | `0 / 0 / 0 / 0` |
+| INFO | 9 |
+| Verified clean (CLEAN) | 4 |
+
+All 9 INFO findings are the probes saying "I could not measure this" — not one was written
+up as an accusation:
+
+| Id | What the tool actually said |
+|---|---|
+| `rel-clean` | 6/6 succeeded, p50 latency 0.72 s |
+| `bill-202` | every panel endpoint unreachable (an official endpoint has no sub2api panel) — **this item was not checked** |
+| `tok-101` | same vendor, shared tokenizer — **not** evidence of a swap |
+| `twins-000` | neither model produced reproducible output; the comparison **could not run** |
+| `id-101` | self-report inconsistent — **this finding accuses no one** |
+| `params-102` | 4 parameter checks never ran (400) — **do not read them as passed** |
+| `params-103` | 2 samples were empty — **an empty reply is not an ignored parameter** |
+| `params-104` | two `temperature=0` calls differed — **this does not accuse the parameter of being ignored** |
+| `stream-104` | output unreproducible, stream comparison undecidable — **no accusation was made** |
+
+The same run settled three things that only an official endpoint can settle:
+
+1. **Model self-reports carry no evidential weight at all.** Asked about its own origin, the
+   official `deepseek-flash` answers "I'm ChatGPT, powered by OpenAI's GPT-5" every time. If
+   self-reports counted as evidence, this probe would accuse DeepSeek of swapping itself.
+2. **Non-reproducibility at `temperature=0` is upstream behaviour, not a relay's fault.** Two
+   identical requests to the official endpoint returned different text. That is where the
+   `params-104` / `stream-104` findings on an honest relay come from.
+3. **400 on `n` / `tools` is upstream policy.** The official endpoint rejects both.
+
+Points 2 and 3 are precisely why `params-104`, `stream-104` and `params-102` can only ever be
+INFO: wording them as "the parameter was ignored" would charge a relay for its upstream's
+behaviour.
+
+Also worth recording: **the grow-and-retry path fired on nearly every probe in this run.** The
+official reasoning backend burns a `max_tokens` budget of 64/120/128/200 on hidden reasoning
+and returns empty visible text just like anything else. Without that retry, the official
+endpoint would have drowned in empty replies.
+
+### An honest relay
+
+A second run against a real relay (reselling the same DeepSeek models, with a public sub2api
+panel) produced `CRITICAL=0 HIGH=0 MEDIUM=0 LOW=0 INFO=13`, exit code `0`. Its panel
+self-reported a 1.0x markup, with upstream cost and charged amount equal line by line, and
+6/6 availability.
+
+### What this record does and does not claim
+
+- As of the version documented here, the tool has produced **no finding above INFO on any
+  endpoint it was measured against**. It did during development (one false `stream-100` HIGH
+  and one false `params-100` MEDIUM, both on an honest relay); the cause and the fix are
+  recorded in limitations 8 and 9 above, which exist because of them.
+- The detection side is accepted against the local mock: the `fraudulent` scenario must
+  produce `bill-201` (markup > 10x), at least two `twins-100` findings, and six silently
+  ignored parameters; the `clean` scenario must produce **zero** findings above CLEAN/INFO.
+  In the wild, one real relay was measured at 43x markup with its response model names
+  rewritten.
+- "Zero false positives" is a measured statement about **the endpoints tested**, not a
+  guarantee about every possible implementation. If you find a counterexample, please open an
+  issue with the `report.json` — that is the single most valuable input this project can get.
 
 ---
 
