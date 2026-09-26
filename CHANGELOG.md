@@ -5,15 +5,22 @@
 
 ## [未发布]
 
-- 文档：`README.md` / `README.en.md` 新增「验证记录」一节，记录一次官方直连端点
-  （`https://api.deepseek.com`，`deepseek-flash` + `deepseek-v4-pro`，全量 11 个探针，
-  243.6 秒 / 134 次请求）的实测结果：退出码 `0`，`CRITICAL/HIGH/MEDIUM/LOW` 全 `0`，
-  INFO 9 条、CLEAN 4 条。9 条 INFO **全部**是「未能测量」，没有一条被写成指控。
-  同一节也写明了这次实测确认的三件事：模型自述无证据价值（官方 `deepseek-flash`
-  稳定自称 ChatGPT/GPT-5）、`temperature=0` 下不可复现属于上游行为、`n`/`tools`
-  报 400 属于上游策略——后两条正是 `params-104`/`stream-104`/`params-102` 只能是
-  INFO 的原因。另把「诚实的局限」第 3、5、9 条原来引用的匿名中转站例子换成官方端点
-  的可复现证据。
+- 文档：`README.md` / `README.en.md` 新增「验证记录」一节，记录两次真实端点的实测。
+  ① 官方直连端点（`https://api.deepseek.com`，`deepseek-flash` + `deepseek-v4-pro`，全量
+  11 个探针，219.0 秒 / 129 次请求）：退出码 `0`，`CRITICAL/HIGH/MEDIUM/LOW` 全 `0`，
+  INFO 9 条、CLEAN 4 条；9 条 INFO 里 8 条是「未能测量」，剩下 1 条 `id-100` 的标题本身
+  就写着「线索，非结论」，没有一条被写成指控。② 一家诚实中转站（转售同一批模型、公开
+  sub2api 面板，181.7 秒 / 132 次请求）：同样全 `0`，INFO 11 条、CLEAN 2 条，面板自报
+  加价倍率 1.0x，计费金额与上游成本逐项完全相等。
+  同一节也写明了这次实测确认的三件事：模型自述无证据价值（官方 `deepseek-flash` 稳定
+  自称 ChatGPT/GPT-5，表里那条 `id-100` 就是官方端点**自己**触发的）、`temperature=0` 下
+  不可复现属于上游行为、`n`/`tools` 报 400 属于上游策略——后两条正是
+  `params-104`/`stream-104`/`params-102` 只能是 INFO 的原因。另把「诚实的局限」第 3、5、9
+  条原来引用的匿名中转站例子换成官方端点的可复现证据。
+  这两条记录都已按 `max_tokens` 覆盖率修复后的构建重跑：原先两边各有一条
+  `params-103 | 2 项样本为空`，现在整条消失（官方端点两个模型都改判 `honoured`，
+  证据是 `requested=16 / billed=16 / finish_reason=length`），官方记录里也补上了
+  `14 项参数检查跑了 8 项` 的分解。
 - 文档：`gui/README.md` 里的桌面包体积改成实测区间（本机 14.2 MB，GitHub CI 构建 15.0 MB）。
 
 - 文档：`README.md` / `README.en.md` 把「模型自述不可靠」那一段的**成因**写准了：模型的

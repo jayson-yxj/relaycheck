@@ -519,7 +519,7 @@ therefore accepted on **zero false positives**, not on detection rate.
 
 `https://api.deepseek.com` — a first-party endpoint with no relay in the path. The two models
 it sells (`deepseek-flash`, `deepseek-v4-pro`) are exactly the models relays resell under those
-same names, so the comparison is direct. All 11 probes, 243.6 s / 134 requests:
+same names, so the comparison is direct. All 11 probes, 219.0 s / 129 requests:
 
 | Metric | Result |
 |---|---|
@@ -529,20 +529,31 @@ same names, so the comparison is direct. All 11 probes, 243.6 s / 134 requests:
 | INFO | 9 |
 | Verified clean (CLEAN) | 4 |
 
-All 9 INFO findings are the probes saying "I could not measure this" — not one was written
-up as an accusation:
+Eight of the 9 INFO findings are the probes saying "I could not measure this"; the ninth
+(`id-100`) is a suspected item whose title literally reads "a lead, not a conclusion". Not one
+was written up as an accusation:
 
 | Id | What the tool actually said |
 |---|---|
-| `rel-clean` | 6/6 succeeded, p50 latency 0.72 s |
+| `rel-clean` | 6/6 succeeded, p50 latency 0.56 s |
 | `bill-202` | every panel endpoint unreachable (an official endpoint has no sub2api panel) — **this item was not checked** |
 | `tok-101` | same vendor, shared tokenizer — **not** evidence of a swap |
 | `twins-000` | neither model produced reproducible output; the comparison **could not run** |
 | `id-101` | self-report inconsistent — **this finding accuses no one** |
+| `id-100` | claimed vendor differs from the name on sale — the title itself says **a lead, not a conclusion** |
 | `params-102` | 4 parameter checks never ran (400) — **do not read them as passed** |
-| `params-103` | 2 samples were empty — **an empty reply is not an ignored parameter** |
 | `params-104` | two `temperature=0` calls differed — **this does not accuse the parameter of being ignored** |
 | `stream-104` | output unreproducible, stream comparison undecidable — **no accusation was made** |
+
+There are 14 parameter checks in total (7 × 2 models); 8 completed with a judgeable result
+(`checks_completed: 8`), 4 were rejected by the official endpoint with a 400, and 2 could not be
+judged because the output was not reproducible. `max_tokens` is among the 8, and it produced the
+cleanest piece of positive evidence the official endpoint has to offer: ask for
+`max_tokens=16` and the server stops at exactly 16 billed tokens with `finish_reason: length` —
+the cap really was applied. Both models agree exactly. This is worth spelling out because a
+reasoning model will burn the `max_tokens` budget on hidden reasoning and leave nothing but an
+empty body, which made an earlier build **abandon the whole check** on reasoning backends: it
+was measurable, it just was not being credited.
 
 The same run settled three things that only an official endpoint can settle:
 
@@ -550,8 +561,9 @@ The same run settled three things that only an official endpoint can settle:
    this most clearly.** Asked about its own origin, the official `deepseek-flash` answers
    "I'm ChatGPT, powered by OpenAI's GPT-5" every time. That is an accent left by distillation
    training; it says nothing about whose cluster serves the model. If self-reports counted as
-   evidence, this probe would accuse DeepSeek of swapping itself. That is the entire reason
-   `id-100` can only ever be INFO.
+   evidence, this probe would accuse DeepSeek of swapping itself. The `id-100` in the table
+   above is exactly that: **the official endpoint triggered it itself.** That is the entire
+   reason `id-100` can only ever be INFO.
 2. **Non-reproducibility at `temperature=0` is upstream behaviour, not a relay's fault.** Two
    identical requests to the official endpoint returned different text. That is where the
    `params-104` / `stream-104` findings on an honest relay come from.
@@ -569,9 +581,14 @@ endpoint would have drowned in empty replies.
 ### An honest relay
 
 A second run against a real relay (reselling the same DeepSeek models, with a public sub2api
-panel) produced `CRITICAL=0 HIGH=0 MEDIUM=0 LOW=0 INFO=13`, exit code `0`. Its panel
-self-reported a 1.0x markup, with upstream cost and charged amount equal line by line, and
-6/6 availability.
+panel) produced `CRITICAL=0 HIGH=0 MEDIUM=0 LOW=0 INFO=11`, exit code `0`, in 181.7 s / 132
+requests. Its panel self-reported a 1.0x markup — 4823 `deepseek-flash` requests and 804
+`deepseek-v4-flash` requests, charged and upstream cost equal line by line — with 6/6
+availability.
+
+Of those 11 INFO findings, `bill-200` (the panel's own accounting basis), `bill-201` (the markup
+ratio) and `echo-101` (a same-vendor rename) are **things the tool read out**; the other 8 are
+"could not measure". Nothing in the report sits above INFO.
 
 ### What this record does and does not claim
 
