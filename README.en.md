@@ -342,6 +342,34 @@ On versions: the syntax was checked file by file with `ast.parse(..., feature_ve
 Windows and macOS 3.11; the development machine is 3.11, so the older versions are held up by
 CI rather than by hand.
 
+### No Python? A Windows desktop build
+
+For people who do not want to touch a terminal. The repo ships a PyInstaller build script:
+
+```powershell
+.\gui\build.ps1        # creates .venv-build, produces dist\relaycheck-desktop\
+```
+
+The window does three things: fill in the URL and key, press Start, read the verdict card and
+the log. It **does not reimplement the audit** — it turns the form into exactly the same argv the
+CLI takes, runs `relaycheck.cli` as a child process, and renders whatever `report.json` says. It
+therefore cannot disagree with the command line.
+
+Two deliberate choices: **the API key travels in the environment, never in the command line**
+(any process on Windows can read another process's argv over WMI), and **the audit runs in a
+child process, not a thread** (a thread stuck in a 60-second socket timeout cannot be
+interrupted, so the Stop button would be a lie).
+
+Three things to know up front. **None of them has a free fix:**
+
+| Problem | Reality |
+|---|---|
+| **Antivirus false positives** | How PyInstaller packs a program is itself a common malware signature; 360, Huorong and Defender may block or delete it. onedir (not onefile) with UPX disabled lowers the rate, but code signing is the only real fix |
+| **SmartScreen** | Unsigned binaries show "Windows protected your PC" on first run; the user has to click through "More info" → "Run anyway". A certificate runs about $100–400/year, and **that one dialog is enough to lose most non-technical users** — currently the biggest obstacle to shipping this |
+| **Size** | About 30 MB for the whole directory, which must be copied whole; the exe alone will not start |
+
+See `gui/README.md` for the details.
+
 ---
 
 ## Usage
@@ -480,6 +508,12 @@ make accusations you cannot support.
 ```bash
 # Self-test: local mock relays, eight scenarios
 python tests/test_mock_relay.py
+
+# Pure-function units for model selection (seconds, no network)
+python tests/test_selection.py
+
+# The desktop shell: key never in argv, windowed channel, verdict card in sync
+python tests/test_gui.py
 ```
 
 `tests/mock_relay.py` starts eight local servers:
@@ -601,6 +635,14 @@ tests/
   mock_relay.py        Mock relays (eight scenarios)
   test_mock_relay.py   End-to-end acceptance (15 tests)
   test_selection.py    Model selection units (15 tests, no network, no server)
+  test_gui.py          Desktop shell units (12 tests, skipped without tkinter)
+gui/
+  relaycheck_gui.py        The shell: builds argv, runs the child, renders report.json
+  relaycheck_cli_entry.py  Console engine entry point (for the GUI's child; not in the pip package)
+  relaycheck_gui.spec      PyInstaller: one COLLECT, two executables
+  build.ps1                One-command build (creates .venv-build)
+  e2e_bundle.py            Source / engine exe / windowed exe run one audit, compared field by field
+  README.md                Desktop notes and distribution caveats
 examples/
   report-*.md          Four real tool outputs (swap / honest / dead / not reproducible)
 .github/workflows/

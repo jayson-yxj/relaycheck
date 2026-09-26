@@ -296,6 +296,32 @@ python -m relaycheck.cli --help
 端到端由 CI 在 Linux 的 3.9 / 3.11 / 3.13 与 Windows、macOS 的 3.11 上跑同一套验收，
 本地开发机是 3.11 —— 所以更老的版本是靠 CI 保下来的，不是靠手感。
 
+### 不装 Python：Windows 桌面版
+
+给完全不想碰命令行的人一个能双击的东西。仓库里带一套 PyInstaller 打包脚本：
+
+```powershell
+.\gui\build.ps1        # 自建 .venv-build，产出 dist\relaycheck-desktop\
+```
+
+界面只做三件事：填地址和 Key、点「开始检测」、看结论卡片和日志。它**不重写审计逻辑** ——
+界面把表单拼成和命令行完全一样的 argv，交给子进程跑 `relaycheck.cli`，再读 `report.json`
+渲染结论。所以界面永远不可能给出和命令行不一样的结论。
+
+两个刻意的设计：**API Key 走环境变量，绝不进命令行**（Windows 上任何进程都能通过 WMI
+读到别的进程的命令行），**审计跑在子进程而不是线程里**（卡在 60 秒 socket 超时里的线程
+中断不掉，「停止」按钮会是假的）。
+
+三个必须提前知道的事，**都没有免费解法**：
+
+| 问题 | 现状 |
+|---|---|
+| **杀毒软件误报** | PyInstaller 的打包方式本身就是恶意打包器的常见特征，360 / 火绒 / Defender 都可能拦或直接删。已用 onedir（不是 onefile）并关掉 UPX 来压低误报率，但要彻底解决得做代码签名 |
+| **SmartScreen 拦截** | 没有签名证书，用户第一次双击会看到「Windows 已保护你的电脑」，得点「更多信息」→「仍要运行」。证书一年约 $100–400，**这一个弹窗就足以劝退大部分小白**，是目前最大的落地障碍 |
+| **体积** | 整个目录约 30 MB，分发时必须整个拷走，只拷 exe 起不来 |
+
+细节见 `gui/README.md`。
+
 ---
 
 ## 用法
@@ -456,6 +482,12 @@ Key 也可以走环境变量：`RELAYCHECK_API_KEY` / `OPENAI_API_KEY`。
 ```bash
 # 自测：本地模拟中转站，八个场景
 python tests/test_mock_relay.py
+
+# 模型选择的纯函数单元测试（秒级，不联网）
+python tests/test_selection.py
+
+# 桌面壳：key 不进 argv、窗口通道、结论卡片与 reporter 同步
+python tests/test_gui.py
 ```
 
 `tests/mock_relay.py` 起八个本地服务：
@@ -555,6 +587,14 @@ tests/
   mock_relay.py        模拟中转站（八个场景）
   test_mock_relay.py   端到端验收（15 项）
   test_selection.py    模型选择单元测试（15 项，不联网、不起服务）
+  test_gui.py          桌面壳单元测试（12 项，无 tkinter 时跳过）
+gui/
+  relaycheck_gui.py        桌面壳：拼 argv、跑子进程、读 report.json 渲染结论
+  relaycheck_cli_entry.py  控制台引擎入口（GUI 的子进程用，不进 pip 包）
+  relaycheck_gui.spec      PyInstaller：一个 COLLECT，两个 exe
+  build.ps1                一键构建（自建 .venv-build）
+  e2e_bundle.py            源码 / 引擎 exe / 窗口 exe 跑同一份审计，逐字段比对
+  README.md                桌面版说明与分发注意事项
 examples/
   report-*.md          四份真实工具输出（掉包 / 诚实 / 死站 / 不可复现）
 .github/workflows/

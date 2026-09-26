@@ -156,6 +156,33 @@ def _make_output_safe() -> None:
             pass
 
 
+def force_utf8_output() -> None:
+    """Force UTF-8 on stdout/stderr, for callers whose reader expects UTF-8.
+
+    Two callers need this and neither is the plain pip-installed CLI:
+
+    * the bundled desktop engine, because a **frozen PyInstaller app ignores
+      ``PYTHONIOENCODING``** — measured on the 6.22.3 Windows build, the parent set
+      it to ``utf-8`` and the frozen child still emitted GBK (``目标`` as
+      ``\\xc4\\xbf\\xb1\\xea``). The GUI decodes that pipe as UTF-8, so without this the
+      log window is mojibake while ``report.json`` is perfectly correct;
+    * the GUI re-dispatching into itself, where the stream may also have started out
+      as ``None``.
+
+    On a real Windows console this changes nothing: Python 3.6+ drives the console
+    through ``WriteConsoleW`` and already reports ``utf-8``. It only affects a pipe
+    or a redirected file — which is exactly the case that was broken.
+
+    ``errors="replace"`` is kept so an unrepresentable character degrades to ``?``
+    rather than aborting the audit.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError, ValueError):  # pragma: no cover - exotic streams
+            pass
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Entry point. Every failure mode must land on a distinct exit code."""
     _make_output_safe()

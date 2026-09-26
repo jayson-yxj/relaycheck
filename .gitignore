@@ -8,6 +8,7 @@ dist/
 .pytest_cache/
 .venv/
 venv/
+.venv-build/
 
 # audit output — per-account billing data for the station under audit.
 # The API key itself never reaches a report (relaycheck/reporter.py has no

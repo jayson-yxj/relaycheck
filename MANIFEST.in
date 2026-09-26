@@ -15,3 +15,7 @@ include SECURITY.md
 include RELEASING.md
 recursive-include tests *.py
 recursive-include examples *.md
+# The Windows desktop build is source, not package data: it is not importable and
+# nothing in relaycheck/ touches it. It rides along so that someone with only the
+# sdist can still build the exe instead of cloning the repository.
+recursive-include gui *.py *.ps1 *.spec *.md
