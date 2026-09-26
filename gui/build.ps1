@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     打包 relaycheck 的 Windows 桌面版：一个目录 + 两个 exe。
 
@@ -49,6 +49,27 @@ if (-not (Test-Path -LiteralPath $SpecPath)) {
 # 失败并给出一条和 tkinter 毫无关系的报错。所以在建 venv 之前就把这个否掉。
 $Probe = 'import sys, tkinter; sys.exit(0 if sys.version_info[:2] >= (3, 9) else 3)'
 
+# 原生程序往 stderr 写一句无害 WARNING 不该让构建失败。但 $ErrorActionPreference='Stop' 碰上
+# 调用方做了 2>&1（`.\build.ps1 2>&1 | Tee-Object build.log` 这种再正常不过的写法）就会把
+# stderr 升级成 NativeCommandError 终止错误 —— PyInstaller 用 conda 解释器时每次都打一句
+# conda-meta 警告，所以这条必定踩得到，而且报错信息里只有那句 WARNING，看不出跟构建有什么关系。
+# 退出码该查还是逐条查，只是不再由 stderr 决定生死。
+function Invoke-Native {
+    param([string]$Exe, [string[]]$Arguments, [switch]$Quiet)
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        if ($Quiet) {
+            $null = & $Exe @Arguments 2>&1
+        } else {
+            & $Exe @Arguments
+        }
+        return $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+}
+
 function Get-CandidateInterpreters {
     $list = New-Object System.Collections.ArrayList
     if ($Python) {
@@ -81,13 +102,13 @@ foreach ($cand in Get-CandidateInterpreters) {
     }
 
     # 版本不匹配时 py 会写 stderr 并返回非 0；tkinter 缺失时抛 ImportError。两种都算不合适。
-    $null = & $exe @pre -c $Probe 2>&1
-    if ($LASTEXITCODE -eq 0) {
+    $code = Invoke-Native $exe ($pre + @('-c', $Probe)) -Quiet
+    if ($code -eq 0) {
         $base = $cand
         Write-Host "   用：$shown" -ForegroundColor Green
         break
     }
-    Write-Host "   跳过：$shown (exit $LASTEXITCODE)" -ForegroundColor DarkGray
+    Write-Host "   跳过：$shown (exit $code)" -ForegroundColor DarkGray
 }
 
 if (-not $base) {
@@ -108,27 +129,30 @@ Write-Host '== 建构建 venv ==' -ForegroundColor Cyan
 if (Test-Path -LiteralPath $VenvDir) {
     Write-Host "   复用 $VenvDir"
 } else {
-    & $exe @pre -m venv $VenvDir
-    if ($LASTEXITCODE -ne 0) { throw "建 venv 失败 (exit $LASTEXITCODE)" }
+    $code = Invoke-Native $exe ($pre + @('-m', 'venv', $VenvDir))
+    if ($code -ne 0) { throw "建 venv 失败 (exit $code)" }
 }
 if (-not (Test-Path -LiteralPath $VenvPy)) { throw "venv 里没有 python：$VenvPy" }
 
 Write-Host '== 装 requests + pyinstaller ==' -ForegroundColor Cyan
-& $VenvPy -m pip install --upgrade pip --quiet
-if ($LASTEXITCODE -ne 0) { throw "升级 pip 失败 (exit $LASTEXITCODE)" }
-& $VenvPy -m pip install requests pyinstaller --quiet
-if ($LASTEXITCODE -ne 0) { throw "装依赖失败 (exit $LASTEXITCODE)" }
+$code = Invoke-Native $VenvPy @('-m', 'pip', 'install', '--upgrade', 'pip', '--quiet')
+if ($code -ne 0) { throw "升级 pip 失败 (exit $code)" }
+$code = Invoke-Native $VenvPy @('-m', 'pip', 'install', 'requests', 'pyinstaller', '--quiet')
+if ($code -ne 0) { throw "装依赖失败 (exit $code)" }
 
-& $VenvPy -c "import PyInstaller, tkinter, requests, sys; print('   pyinstaller', PyInstaller.__version__, '| tk', tkinter.TkVersion, '| requests', requests.__version__); print('  ', sys.version.split()[0], sys.executable)"
+$null = Invoke-Native $VenvPy @(
+    '-c',
+    "import PyInstaller, tkinter, requests, sys; print('   pyinstaller', PyInstaller.__version__, '| tk', tkinter.TkVersion, '| requests', requests.__version__); print('  ', sys.version.split()[0], sys.executable)"
+)
 
 Write-Host '== 构建 ==' -ForegroundColor Cyan
 Push-Location $RepoRoot
 try {
-    $args = @('-m', 'PyInstaller', '--noconfirm')
-    if (-not $NoClean) { $args += '--clean' }
-    $args += (Resolve-Path -LiteralPath $SpecPath).Path
-    & $VenvPy @args
-    if ($LASTEXITCODE -ne 0) { throw "PyInstaller 失败 (exit $LASTEXITCODE)" }
+    $pyi = @('-m', 'PyInstaller', '--noconfirm')
+    if (-not $NoClean) { $pyi += '--clean' }
+    $pyi += (Resolve-Path -LiteralPath $SpecPath).Path
+    $code = Invoke-Native $VenvPy $pyi
+    if ($code -ne 0) { throw "PyInstaller 失败 (exit $code)" }
 } finally {
     Pop-Location
 }
@@ -147,7 +171,7 @@ Write-Host "   双击：$OutDir\relaycheck-gui.exe"
 if ($Test) {
     Write-Host ''
     Write-Host '== 端到端比对（源码 CLI / 引擎 exe / 窗口 exe）==' -ForegroundColor Cyan
-    & $VenvPy (Join-Path $PSScriptRoot 'e2e_bundle.py')
-    if ($LASTEXITCODE -ne 0) { throw "端到端比对失败 (exit $LASTEXITCODE)" }
+    $code = Invoke-Native $VenvPy @((Join-Path $PSScriptRoot 'e2e_bundle.py'))
+    if ($code -ne 0) { throw "端到端比对失败 (exit $code)" }
     Write-Host '   全部通过' -ForegroundColor Green
 }

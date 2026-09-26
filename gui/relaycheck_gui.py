@@ -292,6 +292,27 @@ class AuditProcess:
             self._proc.terminate()
 
 
+# ---------------------------------------------------------------- window chrome
+
+def _icon_path(suffix: str) -> Path | None:
+    """Locate ``relaycheck.<suffix>``, frozen or from source.
+
+    PyInstaller unpacks bundled data under ``sys._MEIPASS``; running this script
+    directly the asset sits next to it. Returns ``None`` when neither exists, so a
+    missing icon degrades to the Tk default instead of refusing to start — an
+    icon is not worth a window that will not open.
+    """
+    candidates: list[Path] = []
+    base = getattr(sys, "_MEIPASS", None)
+    if base:
+        candidates.append(Path(base) / f"relaycheck.{suffix}")
+    candidates.append(Path(__file__).resolve().parent / f"relaycheck.{suffix}")
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 # ------------------------------------------------------------------------- the UI
 
 class RelayCheckApp:
@@ -300,11 +321,16 @@ class RelayCheckApp:
         self.proc: AuditProcess | None = None
         self.last_out_dir: Path | None = None
         self._model_names: list[str] = []
+        self._probes_done = 0
+        self._probes_total = 0
+        self._icon_image: tk.PhotoImage | None = None
+        self._icon_error = ""
 
         root.title(f"{APP_TITLE} {__version__}")
         root.geometry("980x800")
         root.minsize(840, 660)
         root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self._apply_icon()
 
         self._build_header()
         self._build_form()
@@ -317,6 +343,35 @@ class RelayCheckApp:
             "填上中转站地址和 API Key，点「开始检测」就行。\n"
             "模型那一栏可以留空 —— 留空会自动从 /v1/models 里挑几个不同厂商的来对比。\n"
         )
+
+    def _apply_icon(self) -> None:
+        path = _icon_path("png")
+        self._icon_error = "" if path is not None else "找不到图标文件"
+        if path is None:
+            return
+        # Two attempts, because one is not reliable. In a long-lived process that builds
+        # several windows, `image create photo -file` was observed to fail with an empty
+        # TclError about once in fifteen runs — no message, no ::errorInfo — and then
+        # succeed immediately when asked again. A real failure (unreadable or corrupt
+        # PNG) fails both times and is reported below rather than swallowed.
+        for _ in range(2):
+            try:
+                # Held on self deliberately: Tk does not own the image, and a
+                # garbage-collected PhotoImage leaves the window with a blank icon.
+                self._icon_image = tk.PhotoImage(file=str(path))
+                break
+            except tk.TclError as exc:
+                self._icon_error = f"{type(exc).__name__}: {str(exc) or 'Tk 没给原因'}"
+        if self._icon_image is None:
+            return
+        try:
+            self.root.iconphoto(True, self._icon_image)
+        except tk.TclError as exc:
+            # A window without an icon still opens, so this is not fatal — but it must
+            # not be silent either. Swallowing it is exactly how the icon went missing
+            # the first time: nothing anywhere said the load had failed.
+            self._icon_image = None
+            self._icon_error = f"iconphoto {type(exc).__name__}: {exc}"
 
     # ------------------------------------------------------------------ widgets
 
@@ -454,11 +509,25 @@ class RelayCheckApp:
         ttk.Label(bar, textvariable=self.status_var, foreground="#555555").pack(
             side="left", padx=(16, 0)
         )
+
+        # Progress. Until this existed the only sign of life during a four-minute
+        # audit against a dead relay was the log scrolling — which is precisely the
+        # moment a user concludes the program has hung and kills it.
+        self.progress = ttk.Progressbar(bar, mode="determinate", length=200)
+        self.progress.pack(side="right")
+
+        # The spend warning used to sit at the far right of this row, at body size
+        # and the same weight as everything else, so the one line on screen that
+        # costs money was also the easiest to ignore. It gets its own row directly
+        # under the button it warns about, in bold.
+        warn = ttk.Frame(self.root, padding=(16, 0, 16, 4))
+        warn.pack(fill="x")
         ttk.Label(
-            bar,
-            text="注意：检测会消耗你自己的 API 额度（一般几十到上百次请求）。",
+            warn,
+            text="⚠ 检测会消耗你自己的 API 额度（一般几十到上百次请求）。",
             foreground="#a1541a",
-        ).pack(side="right")
+            font=("Microsoft YaHei UI", 9, "bold"),
+        ).pack(anchor="w")
 
     def _build_verdict(self) -> None:
         self.card = tk.Frame(self.root, bd=1, relief="solid", background="#eeeeee")
@@ -536,6 +605,39 @@ class RelayCheckApp:
         self.open_btn.configure(
             state="normal" if (self.last_out_dir and self.last_out_dir.is_dir()) else "disabled"
         )
+
+    def _set_progress(self, done: int, total: int) -> None:
+        if total > 0:
+            self.progress.configure(maximum=total, value=min(done, total))
+        else:
+            self.progress.configure(maximum=1, value=0)
+
+    def _note_progress(self, line: str) -> None:
+        """Advance the bar from the CLI's own progress lines.
+
+        The child is a separate process whose output format we do not own, so this
+        only acts on lines it fully recognises, and it never *guesses* completion.
+        If the run is stopped or crashes, the bar stops where the evidence stopped
+        — filling it anyway would be this window telling a lie the CLI never told.
+        """
+        text = line.strip()
+        if text.startswith("探针: "):
+            names = [n for n in text[len("探针: "):].split(",") if n.strip()]
+            self._probes_total = len(names)
+            self._set_progress(self._probes_done, self._probes_total)
+        elif text.startswith("→ "):
+            name = text[len("→ "):].rstrip(" …")
+            if name:
+                self.status_var.set(
+                    f"第 {self._probes_done + 1}/{self._probes_total} 项：{name}"
+                    if self._probes_total
+                    else f"正在跑：{name}"
+                )
+        elif text.startswith("√ "):
+            self._probes_done += 1
+            self._set_progress(self._probes_done, self._probes_total)
+            if self._probes_total:
+                self.status_var.set(f"已完成 {self._probes_done}/{self._probes_total} 项")
 
     def _show_card(
         self,
@@ -683,6 +785,9 @@ class RelayCheckApp:
         self._log(f"命令等价于：relaycheck -u {url} --out-dir {out_dir} "
                   f"{'-m ' + models if models else '(自动挑选模型)'}")
 
+        self._probes_done = 0
+        self._probes_total = 0
+        self._set_progress(0, 0)
         self.proc = AuditProcess(args, key)
         self.proc.start()
         self._set_running(True)
@@ -705,6 +810,7 @@ class RelayCheckApp:
             if line is None:
                 done = True
                 break
+            self._note_progress(line)
             self._log(line)
 
         if done:
@@ -716,7 +822,15 @@ class RelayCheckApp:
         assert self.proc is not None
         code = self.proc.returncode
         self._set_running(False)
-        self.status_var.set(f"结束（退出码 {code}）")
+        if self._probes_total and self._probes_done < self._probes_total:
+            # Deliberately does not top the bar up. A run that was stopped, or one
+            # whose probe budget ran out, did not finish the checklist, and a full
+            # bar would claim it did.
+            self.status_var.set(
+                f"提前结束（{self._probes_done}/{self._probes_total} 项，退出码 {code}）"
+            )
+        else:
+            self.status_var.set(f"结束（退出码 {code}）")
 
         report = None
         if self.last_out_dir is not None:

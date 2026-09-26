@@ -510,6 +510,206 @@ def test_gui_version_matches_the_package() -> None:
     assert G.__version__ == __version__
 
 
+# ------------------------------------------------------------- progress & chrome
+
+
+def _walk(widget):
+    """Every descendant of ``widget``, depth first."""
+    yield widget
+    for child in widget.winfo_children():
+        yield from _walk(child)
+
+
+def test_the_progress_bar_only_counts_what_the_cli_actually_reported() -> None:
+    """The bar is the only thing moving during a four-minute dead-relay run.
+
+    It is also the easiest widget in the window to make dishonest: it has no idea
+    what the child process is doing, it only reads the child's own stdout. So the
+    two failure modes worth pinning are that it counts a line that is not a probe,
+    and that it invents progress it never saw.
+    """
+    if not _need_gui():
+        return
+    root = _tk_root()
+    if root is None:
+        _skip("no display available")
+        return
+    try:
+        app = G.RelayCheckApp(root)
+        # Exactly the shapes cli.py prints, plus the two intra-probe lines that
+        # must change nothing at all.
+        for line in (
+            "探针: reliability, echo, billing-panel",
+            "  → reliability …",
+            "      · gpt-4o 第 1/2 次探测中…",
+            "    √ reliability: info (2 请求 / 0.0s)",
+            "  → echo …",
+            "    √ echo: medium (4 请求 / 0.4s)",
+        ):
+            app._note_progress(line)
+
+        assert app._probes_total == 3, app._probes_total
+        assert app._probes_done == 2, app._probes_done
+        assert float(app.progress["maximum"]) == 3.0
+        assert float(app.progress["value"]) == 2.0
+        assert app.status_var.get() == "已完成 2/3 项", app.status_var.get()
+
+        # Anything unrecognised is not evidence of progress.
+        for junk in ("", "   ", "搞不懂的一行", "√", "→"):
+            app._note_progress(junk)
+        assert app._probes_done == 2, app._probes_done
+        assert app.status_var.get() == "已完成 2/3 项"
+    finally:
+        root.update_idletasks()
+
+
+def test_a_run_that_was_stopped_does_not_get_a_full_progress_bar() -> None:
+    """Two-thirds of a checklist is not a finished checklist.
+
+    A full bar after a stop would be this window asserting something the child
+    never said — the same mistake as reporting CLEAN for a probe that never ran.
+    """
+    if not _need_gui():
+        return
+    root = _tk_root()
+    if root is None:
+        _skip("no display available")
+        return
+    from types import SimpleNamespace
+
+    try:
+        app = G.RelayCheckApp(root)
+        app._probes_total = 8
+        app._probes_done = 3
+        app._set_progress(app._probes_done, app._probes_total)
+        app.proc = SimpleNamespace(returncode=1, running=False)
+        app._finish()
+
+        assert float(app.progress["value"]) == 3.0, app.progress["value"]
+        assert float(app.progress["maximum"]) == 8.0
+        assert "3/8" in app.status_var.get(), app.status_var.get()
+
+        # And a stray over-count can never push the bar past its own end.
+        app._set_progress(99, 8)
+        assert float(app.progress["value"]) == 8.0
+    finally:
+        root.update_idletasks()
+
+
+def test_the_window_actually_has_an_icon_and_it_is_the_generated_one() -> None:
+    """Asserts the load, not the file — a missing icon is the bug this replaced.
+
+    Before this, ``grep -i "icon|\\.ico"`` over ``gui/`` returned nothing at all: the
+    exe shipped PyInstaller's default mark and the window showed Tk's feather. A
+    test that only checked "the .ico exists" would go green again the moment the
+    wiring broke, which is exactly how it was broken the first time.
+    """
+    if not _need_gui():
+        return
+    root = _tk_root()
+    if root is None:
+        _skip("no display available")
+        return
+
+    png = G._icon_path("png")
+    assert png is not None and png.is_file(), f"窗口图标 png 找不到：{png}"
+    assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n", "窗口图标不是 PNG"
+
+    # Parsed by hand instead of with Pillow: this suite has to keep running on a CI
+    # box that has nothing installed but requests and pytest.
+    import struct
+
+    ico = png.with_suffix(".ico")
+    assert ico.is_file(), f"exe 图标 ico 找不到：{ico}"
+    blob = ico.read_bytes()
+    reserved, kind, count = struct.unpack_from("<HHH", blob, 0)
+    assert (reserved, kind) == (0, 1), f"不是 ICO 文件头：{(reserved, kind)}"
+    sizes = sorted(blob[6 + 16 * i] or 256 for i in range(count))
+    assert sizes == [16, 24, 32, 48, 64, 128, 256], (
+        f"ico 里缺尺寸，16px 会由 Windows 从大图缩出来而不是取预渲染帧：{sizes}"
+    )
+
+    try:
+        app = G.RelayCheckApp(root)
+        assert app._icon_image is not None, (
+            f"图标文件在，但 iconphoto 没生效 —— 窗口会退回 Tk 默认羽毛：{app._icon_error}"
+        )
+        assert app._icon_image.width() == 256, app._icon_image.width()
+    finally:
+        root.update_idletasks()
+
+
+def test_the_spend_warning_is_bold_and_off_the_button_row() -> None:
+    """The one line on screen that costs money used to be the easiest to ignore.
+
+    It sat at the far right of the button row at body weight, a whole window away
+    from the button it was warning about. Prominence *is* the fix, so prominence
+    is what gets asserted.
+    """
+    if not _need_gui():
+        return
+    root = _tk_root()
+    if root is None:
+        _skip("no display available")
+        return
+    import tkinter as tk
+
+    # A Toplevel rather than the shared root: every check in this file packs its app
+    # onto the same long-lived root, so walking ``app.root`` would find one warning
+    # label per test that ran before this one and "exactly once" would depend on
+    # test order.
+    top = tk.Toplevel(root)
+    try:
+        app = G.RelayCheckApp(top)
+        hits = []
+        for widget in _walk(top):
+            try:
+                if "API 额度" in str(widget.cget("text")):
+                    hits.append(widget)
+            except Exception:  # noqa: BLE001 - widget has no -text option
+                continue
+        assert len(hits) == 1, f"花钱提醒应恰好出现一次，实际 {len(hits)} 次"
+        warn = hits[0]
+        assert "bold" in str(warn.cget("font")), warn.cget("font")
+        assert str(warn.cget("foreground")) == "#a1541a", warn.cget("foreground")
+        # Checked structurally rather than by comparing against ``start_btn.master``,
+        # because the claim is about the row, not about one instance: a TButton in
+        # the warning's own frame means it is back in the button row.
+        siblings = [w.winfo_class() for w in warn.master.winfo_children()]
+        assert "TButton" not in siblings, (
+            f"花钱提醒又回到了按钮行 —— 它得跟它提醒的那个按钮在一个视觉块里：{siblings}"
+        )
+    finally:
+        top.update_idletasks()
+        top.destroy()
+
+
+def test_the_build_script_survives_a_chinese_locale_windows_powershell() -> None:
+    """A BOM-less .ps1 is decoded as ANSI by Windows PowerShell 5.1, which eats lines.
+
+    This is not a style rule. On a zh-CN box cp936 has *lead* bytes, so a CJK
+    character at the end of a comment can pair with the following LF and pull the
+    next source line into the comment. Six lines of ``gui/build.ps1`` were being
+    swallowed, and one of them was ``$Probe = '...'`` — so ``build.ps1 -Python``
+    failed with "Argument expected for the -c option" and then claimed no usable
+    interpreter existed, for an interpreter that worked when typed by hand.
+
+    CI cannot catch this: the runner is en-US, and cp1252 has no lead bytes, so the
+    same file parses cleanly there. Only a BOM makes both editions read UTF-8.
+    """
+    # Deliberately not guarded by _need_gui(): this reads a file, so it must keep
+    # running — and keep guarding — on a box with no tkinter at all.
+    script = ROOT / "gui" / "build.ps1"
+    assert script.is_file(), f"找不到构建脚本：{script}"
+    raw = script.read_bytes()
+    assert raw[:3] == b"\xef\xbb\xbf", (
+        "gui/build.ps1 没有 UTF-8 BOM —— Windows PowerShell 5.1 会按 ANSI(cp936) "
+        "解码，中文注释会连行吞掉后面的代码"
+    )
+    # A BOM on a file that is not valid UTF-8 would be worse than no BOM at all.
+    raw[3:].decode("utf-8")
+
+
 # --------------------------------------------------------------------- runner
 
 

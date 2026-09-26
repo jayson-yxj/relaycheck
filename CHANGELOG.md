@@ -42,6 +42,64 @@ identity 探针每跑一次都会拿到「这个模型说自己是哪个厂商�
 两条都验证过「把修复回退即失败」（`AttributeError: ... no attribute '_family_lines'` /
 `TypeError: _show_card() takes 4 positional arguments but 5 were given`）。
 
+### 新增：桌面版的三处可用性修复（图标 / 进度条 / 花钱提醒）
+
+**一、窗口和 exe 有了图标。** 在这之前 `gui/` 里一个图标文件都没有：exe 顶着 PyInstaller
+的默认标记，窗口是 Tk 的羽毛。`gui/make_icon.py` 从源码里的几何参数生成 `relaycheck.ico`
+（16/24/32/48/64/128/256 七档）和 `relaycheck.png`（Tk 读不了 ico，窗口得用 png），
+两个 exe 走 `icon=`，窗口走 `iconphoto`。
+
+设计上只有两条硬约束，写在生成器的 docstring 里：**必须活过 16px** —— 资源管理器的小图标
+视图和小任务栏就用这一档，只在 256px 好看的那叫插画；以及**不能被读成又一个安全盾牌**。
+最后选的是 `≠`，因为它就是整个主张：你要的和回来的不是同一个。放大镜和双向箭头两版都在
+16px 上被淘汰。
+
+这不是纯装饰：PyInstaller 的默认图标本身就会抬高杀软的启发式评分，和 `upx=False` 同一个理由。
+
+窗口图标那次加载**不是一次就成的**。在一个反复建窗口的长命进程里，`image create photo -file`
+大约十五次里会有一次抛出一个**消息为空**的 `TclError`（`::errorInfo` 也是空的），紧接着重试就
+成功，root 状态完全正常 —— 是单次 Tcl 调用的瞬时失败，不是状态坏了。所以 `_apply_icon` 试两次，
+两次都失败才把原因记进 `_icon_error`。一次偶发不该让窗口顶着 Tk 默认羽毛，而真正的失败
+（png 读不了、被截断）两次都会失败，照样会被记下来而不是吞掉。
+
+**二、进度条。** 一次标准检测要跑四分钟上下，之前窗口里唯一的生命迹象是日志在滚。现在按钮行
+右侧有一条 `ttk.Progressbar`，**数据全部来自 CLI 自己打印的进度行**（`探针: …` / `→ name …` /
+`√ name: flag`），窗口不自己数数。条走的是**已完成**的项，状态行说的是**正在跑**的项，两者
+刻意不同。
+
+中途「停止」不会把条补满：条停在真实完成数上，状态写「提前结束（3/8 项，退出码 1）」。把没跑完
+的检测画成 100%，就是在替使用者下一个他没同意的结论。
+
+**三、花钱提醒换了位置。** 那句「检测会消耗你自己的 API 额度」原本在按钮行的最右边，正文字号，
+离它警告的那个按钮隔了大半个窗口。现在它单独一行、紧贴「开始检测」下方、加粗并大一号 ——
+全屏唯一一句要花钱的话，不该是最容易被忽略的那句。
+
+**测试**：`tests/test_gui.py` 新增 4 项（14 → 18）：进度条只认 CLI 报过的数、中止的运行不会拿到
+满条、窗口真的挂上了生成出来的图标、花钱提醒是粗体且不在按钮行。四条都验证过「把修复回退即失败」
+（`AttributeError: ... no attribute '_note_progress'` / `... '_set_progress'` /
+`module 'relaycheck_gui' has no attribute '_icon_path'` / `AssertionError: assert 'bold' in ''`）。
+
+### 修正：`gui/build.ps1` 在中文 Windows 上会被拆错行（少了一个 UTF-8 BOM）
+
+这个文件一直没有 BOM。**Windows PowerShell 5.1 对没有 BOM 的 `.ps1` 按 ANSI 解码**，在中文机器
+上就是 cp936 —— 而 cp936 有前导字节，中文注释末尾的字节会和后面的换行配成一个双字节字符，
+**把下一行源码吞进注释里**。实测这个文件有 16 行是这么没的（154 行被读成 138 行），其中一行是
+`$Probe = '...'`，于是：
+
+```
+.\build.ps1 -Python 'E:\anaconda\python.exe'
+→ python.exe : Argument expected for the -c option
+→ 没找到可用解释器。要求 Python >= 3.9 并且带 tkinter。
+```
+
+而同一个解释器手动跑得好好的。`-Python` 这个参数从写下来那天起，在中文机器上就没成功过一次。
+
+CI 抓不到：runner 是 en-US，cp1252 没有前导字节，同一个文件在那边解析完全正常。修复是给文件加
+BOM（PS 5.1 和 7 都会因此按 UTF-8 读），**源码一个字都没改**。
+
+**测试**：`tests/test_gui.py` 新增 `test_the_build_script_survives_a_chinese_locale_windows_powershell`
+（18 → 19）—— 断言 `gui/build.ps1` 带 BOM，且 BOM 之后仍是合法 UTF-8。验证过「把 BOM 去掉即失败」。
+
 ## [0.1.3] — 2026-09-26
 
 这一版只做一件事：把审计里唯一一个**判断**（选哪几个模型来测）也写进产物。

@@ -23,6 +23,13 @@ from pathlib import Path
 
 ROOT = Path(SPECPATH).resolve().parent
 
+# 图标。`.ico` 给两个 exe 当外壳图标，`.png` 由窗口自己用 `iconphoto` 加载 —— Tk
+# 读不了 ico。两份都由 `gui/make_icon.py` 从源码里的几何参数重新生成，不要手改二进制。
+# 这不是纯装饰：PyInstaller 的默认图标本身就会抬高杀软的启发式评分（同 upx=False 的理由），
+# 而且一个没有图标的 exe 在资源管理器里看起来就像来路不明的东西。
+ICON = str(ROOT / "gui" / "relaycheck.ico")
+ICON_PNG = str(ROOT / "gui" / "relaycheck.png")
+
 # tkinter 的子模块是懒加载的，静态分析看不到，得点名。
 HIDDEN = [
     "tkinter",
@@ -47,7 +54,7 @@ EXCLUDES = [
 COMMON_ANALYSIS = dict(
     pathex=[str(ROOT)],
     binaries=[],
-    datas=[],
+    datas=[(ICON_PNG, ".")],
     hiddenimports=HIDDEN,
     hookspath=[],
     hooksconfig={},
@@ -95,6 +102,7 @@ exe_gui = EXE(
     pyz_gui, a_gui.scripts, [],
     name="relaycheck-gui",
     console=False,
+    icon=ICON,
     # 保持 True 的默认行为：窗口程序崩了会弹一个带 traceback 的对话框，
     # 而不是双击之后什么都没发生。
     disable_windowed_traceback=False,
@@ -109,6 +117,7 @@ exe_cli = EXE(
     pyz_cli, a_cli.scripts, [],
     name="relaycheck",
     console=True,
+    icon=ICON,
     disable_windowed_traceback=False,
     **COMMON_EXE,
 )
