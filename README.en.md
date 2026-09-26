@@ -1,6 +1,7 @@
 # relaycheck
 
 [![CI](https://github.com/jayson-yxj/relaycheck/actions/workflows/ci.yml/badge.svg)](https://github.com/jayson-yxj/relaycheck/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/relaycheck.svg)](https://pypi.org/project/relaycheck/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Detect whether an LLM API **relay** (proxy / reseller / aggregator) is **swapping models**
@@ -318,7 +319,10 @@ default.
 ## Install
 
 ```bash
-# Straight from GitHub, no clone required
+# From PyPI
+pip install relaycheck
+
+# Or track the latest unreleased commit on main
 pip install "git+https://github.com/jayson-yxj/relaycheck.git"
 
 # From a source checkout; installs the `relaycheck` command
@@ -334,9 +338,9 @@ python -m relaycheck.cli --help
 The only dependency is `requests`. Python ≥ 3.9.
 
 On versions: the syntax was checked file by file with `ast.parse(..., feature_version=(3, 9))`
-(20 files, 0 incompatible), and the end-to-end run was exercised on 3.11. CI declares
-3.9 / 3.11 / 3.13 on Linux plus one Windows and one macOS leg — but **that workflow has
-never actually run**, so whether it is green is unknown until the first push.
+(20 files, 0 incompatible). The end-to-end suite runs in CI on Linux 3.9 / 3.11 / 3.13 and on
+Windows and macOS 3.11; the development machine is 3.11, so the older versions are held up by
+CI rather than by hand.
 
 ---
 

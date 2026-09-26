@@ -1,6 +1,7 @@
 # relaycheck
 
 [![CI](https://github.com/jayson-yxj/relaycheck/actions/workflows/ci.yml/badge.svg)](https://github.com/jayson-yxj/relaycheck/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/relaycheck.svg)](https://pypi.org/project/relaycheck/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 检测 LLM API **中转站**（relay / 代理商 / 聚合站）是否**掉包模型**、是否**虚报计费**。
@@ -273,7 +274,10 @@ LOW 不触发默认的 `--fail-on high`，不会把一个诚实的别名对判�
 ## 安装
 
 ```bash
-# 直接从 GitHub 装，不用先 clone
+# 从 PyPI 装
+pip install relaycheck
+
+# 想跟 main 上还没发版的最新提交
 pip install "git+https://github.com/jayson-yxj/relaycheck.git"
 
 # 或者从源码目录装，会建出 relaycheck 这个命令
@@ -288,9 +292,9 @@ python -m relaycheck.cli --help
 
 依赖只有 `requests`。Python ≥ 3.9。
 
-关于版本：语法用 `ast.parse(..., feature_version=(3, 9))` 逐文件核对过（20 个文件，0 个不兼容），
-端到端只有 3.11 上实测过。CI 配了 3.9 / 3.11 / 3.13 三条 Linux 腿加 Windows、macOS 各一条，
-但**那套配置还没在真 CI 上跑过**——第一次 push 之后才知道它是不是真的绿。
+关于版本：语法用 `ast.parse(..., feature_version=(3, 9))` 逐文件核对过（20 个文件，0 个不兼容）。
+端到端由 CI 在 Linux 的 3.9 / 3.11 / 3.13 与 Windows、macOS 的 3.11 上跑同一套验收，
+本地开发机是 3.11 —— 所以更老的版本是靠 CI 保下来的，不是靠手感。
 
 ---
 
