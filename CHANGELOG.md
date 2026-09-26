@@ -5,6 +5,43 @@
 
 ## [未发布]
 
+### 新增：桌面版结果卡显示「家族线索」（每个模型自己供出的身份）
+
+identity 探针每跑一次都会拿到「这个模型说自己是哪个厂商的」，但这份数据只以一条 finding 的
+**标题**（「模型自称的厂商与售卖名称不一致」）出现在窗口里，真正的逐模型自述和原文句子留在
+`report.json` 里。于是使用者看到「有问题」三个字，看不到问题长什么样。
+
+现在结果卡底部多一段：
+
+```
+家族线索：每个模型自己供出的身份（只是线索，单独一条不足以定性）
+  ! deepseek-chat      售卖 deepseek，自称 minimax       「I was developed by MiniMax.」
+  ! gemini-1.5-pro     售卖 google，自称 openai          「I was created by OpenAI.」
+  = claude-3-5-sonnet  售卖 anthropic，自称 anthropic（一致）
+  = gpt-4o             售卖 openai，自称 openai（一致）
+```
+
+这样写的理由：**本项目最容易被误读的一句话是「模型自称的厂商不对」**。把原文摊开，读者自己
+就能看出这是「I was created by OpenAI」这种套话——官方 DeepSeek 端点也这么答（见 README
+「诚实的局限」）。一条能自己验证的免责声明，比一条要求你相信的免责声明值钱。
+
+细节：
+
+- 矛盾（`!`）排最前，一致（`=`）在后 —— 有意思的不能压在下面。
+- 引文取自 `id-100` 自己的 `evidence.contradictions[].quote`，**不在窗口里重新挑句子**，
+  否则窗口引用的句子可能与报告不一致。
+- 交付方式（`unstable` / `unrechecked` / 采集失败）各有自己的说法，不假装拿到了自述。
+- 未知 verdict 退化成「没拿到可用的自述」，而不是空行或异常。
+- 切卡时清空：连跑两个站再看「运行失败」，不会把上一个站的模型身份挂在这个站下面。
+- 对齐是手工算的（模型名按 ASCII 补宽、引文列按「CJK 算两列」的宽度补齐）——Consolas 只覆盖
+  ASCII，Tk 会给中文换一个比例字体，不补宽就会阶梯状错位。
+
+**测试**：`tests/test_gui.py` 新增
+`test_the_card_lists_what_each_model_said_it_was`（含对齐断言）与
+`test_switching_cards_clears_the_previous_runs_family_lines`（12 → 14 项）。
+两条都验证过「把修复回退即失败」（`AttributeError: ... no attribute '_family_lines'` /
+`TypeError: _show_card() takes 4 positional arguments but 5 were given`）。
+
 ## [0.1.3] — 2026-09-26
 
 这一版只做一件事：把审计里唯一一个**判断**（选哪几个模型来测）也写进产物。

@@ -102,6 +102,120 @@ _SEVERITY_CHIPS: tuple[tuple[str, str], ...] = (
     ("clean", "CLEAN"),
 )
 
+#: How the identity probe's per-model verdict is worded on the card. The probe's
+#: own vocabulary is ``contradiction`` / ``unstable`` / ``unrechecked`` /
+#: ``consistent`` / ``unchecked`` (``relaycheck/probes/identity.py``), and the
+#: wording here has to carry the same weight: a self-report is a lead, never a
+#: conclusion. ``unchecked`` doubles as the fallback for a verdict this shell has
+#: never seen, so an upstream rename degrades to "no usable self-report" rather
+#: than to a blank line.
+_FAMILY_VERDICT_TEXT: dict[str, str] = {
+    "contradiction": "售卖 {expected}，自称 {reported}",
+    "consistent": "售卖 {expected}，自称 {expected}（一致）",
+    "unstable": "同一个问题问两遍，自称的厂商不一样 —— 不采信",
+    "unrechecked": "自称与售卖名称不同，但没来得及复核 —— 不下结论",
+    "unchecked": "没拿到可用的自述",
+}
+
+#: Display column the quoted self-report starts at, so the quotes stack instead
+#: of stair-stepping with the length of the family name above them.
+_QUOTE_COLUMN = 34
+
+
+def _display_width(text: str) -> int:
+    """Columns a string occupies in a terminal-ish font, CJK counted double.
+
+    Needed because the family block is laid out by hand: Tk falls back to a
+    proportional font for the CJK runs inside the Consolas label, so ``len()``
+    does not predict where the next column lands. A rough wide/narrow split is
+    accurate enough to line the quotes up.
+    """
+    return sum(2 if ord(ch) > 0x2E7F else 1 for ch in text)
+
+
+def _family_lines(report: dict[str, Any]) -> list[str]:
+    """One line per model: what it was sold as, and what it said it was.
+
+    The identity probe already extracts this, and it is the single most
+    interesting thing a non-expert takes out of a run — but it only reached the
+    window as a finding *title* (「模型自称的厂商与售卖名称不一致」), with the actual
+    per-model claims buried in ``report.json``. Showing the claims makes this
+    tool's own caveat checkable instead of merely stated: the reader sees the
+    quote, sees that it is stock "I was created by OpenAI" boilerplate coming off
+    a DeepSeek endpoint, and understands *why* a self-report cannot carry a
+    verdict. A caveat the reader can verify is worth more than one they must take
+    on trust.
+
+    Quotes come from the ``id-100`` finding's own evidence rather than being
+    re-derived here, so the window can never pick a different sentence than the
+    report did.
+    """
+    quotes: dict[str, str] = {}
+    for finding in report.get("findings") or []:
+        if not isinstance(finding, dict):
+            continue
+        evidence = finding.get("evidence") or {}
+        for item in evidence.get("contradictions") or []:
+            if isinstance(item, dict) and item.get("model"):
+                quotes[str(item["model"])] = str(item.get("quote") or "")
+
+    # Contradictions first — the interesting ones must not sit below the fold.
+    order = {"contradiction": 0, "unstable": 1, "unrechecked": 2, "consistent": 3}
+
+    for result in report.get("results") or []:
+        if not isinstance(result, dict) or result.get("probe") != "identity":
+            continue
+        observations = (result.get("data") or {}).get("observations") or {}
+        if not isinstance(observations, dict):
+            continue
+        ranked = sorted(
+            ((str(m), r) for m, r in observations.items() if isinstance(r, dict)),
+            key=lambda kv: (order.get(str(kv[1].get("verdict")), 9), kv[0]),
+        )
+        rendered: list[tuple[str, str, str]] = []
+        for model, record in ranked:
+            if record.get("error"):
+                rendered.append(("?", model, "自述采集失败"))
+                continue
+            verdict = str(record.get("verdict") or "unchecked")
+            expected = str(record.get("expected_family") or "未知")
+            reported = (
+                "、".join(str(x) for x in (record.get("confirmed_families") or []))
+                or "、".join(str(x) for x in (record.get("self_reported_families") or []))
+                or "未知"
+            )
+            if verdict == "contradiction":
+                mark = "!"
+                text = _FAMILY_VERDICT_TEXT["contradiction"].format(
+                    expected=expected, reported=reported
+                )
+                quote = quotes.get(model)
+                if quote:
+                    pad = " " * max(2, _QUOTE_COLUMN - _display_width(text))
+                    text += f"{pad}「{quote}」"
+            elif verdict == "consistent":
+                mark = "="
+                text = _FAMILY_VERDICT_TEXT["consistent"].format(
+                    expected=expected, reported=reported
+                )
+            else:
+                mark = "?"
+                text = _FAMILY_VERDICT_TEXT.get(verdict, _FAMILY_VERDICT_TEXT["unchecked"])
+            rendered.append((mark, model, text))
+
+        # Pad the model name to the batch width. Consolas is monospace for ASCII
+        # but Tk substitutes a *proportional* font for the CJK runs, so the 售卖
+        # column only lines up if the one field that is always ASCII and always
+        # differs in length is padded by hand. Without this the block
+        # stair-steps and reads as broken text rather than as a table.
+        width = min(max((len(m) for _, m, _ in rendered), default=0), 26)
+        lines: list[str] = []
+        for mark, model, text in rendered:
+            pad = " " * (width - len(model)) if len(model) <= width else ""
+            lines.append(f"  {mark} {model}{pad}  {text}")
+        return lines
+    return []
+
 
 # ------------------------------------------------------------------- process glue
 
@@ -363,7 +477,15 @@ class RelayCheckApp:
             self.card, text="", background="#eeeeee", anchor="w", justify="left",
             font=("Consolas", 10),
         )
-        self.chips_label.pack(fill="x", padx=12, pady=(0, 10))
+        self.chips_label.pack(fill="x", padx=12, pady=(0, 6))
+        # The per-model self-reports. Deliberately part of the card and not of the
+        # log: the log is raw tool output and scrolls away, whereas "who did each
+        # model say it was" is the evidence for the caveat printed right above it.
+        self.family_label = tk.Label(
+            self.card, text="", background="#eeeeee", anchor="w", justify="left",
+            font=("Consolas", 9), wraplength=900,
+        )
+        self.family_label.pack(fill="x", padx=12, pady=(0, 10))
 
     def _build_log(self) -> None:
         wrap = ttk.LabelFrame(self.root, text="运行日志", padding=(8, 6, 8, 8))
@@ -415,9 +537,21 @@ class RelayCheckApp:
             state="normal" if (self.last_out_dir and self.last_out_dir.is_dir()) else "disabled"
         )
 
-    def _show_card(self, verdict: str, detail: str, counts: dict[str, int] | None) -> None:
+    def _show_card(
+        self,
+        verdict: str,
+        detail: str,
+        counts: dict[str, int] | None,
+        families: list[str] | None = None,
+    ) -> None:
         fg, bg, _ = VERDICT_STYLE.get(verdict, ("#333333", "#eeeeee", ""))
-        for widget in (self.card, self.verdict_label, self.verdict_detail, self.chips_label):
+        for widget in (
+            self.card,
+            self.verdict_label,
+            self.verdict_detail,
+            self.chips_label,
+            self.family_label,
+        ):
             widget.configure(background=bg)
         self.verdict_label.configure(text=verdict, foreground=fg)
         self.verdict_detail.configure(text=detail, foreground="#333333")
@@ -428,6 +562,14 @@ class RelayCheckApp:
             )
         else:
             self.chips_label.configure(text="")
+        if families:
+            self.family_label.configure(
+                text="家族线索：每个模型自己供出的身份（只是线索，单独一条不足以定性）\n"
+                + "\n".join(families),
+                foreground="#333333",
+            )
+        else:
+            self.family_label.configure(text="")
         self.root.update_idletasks()
 
     def _open_out_dir(self) -> None:
@@ -606,7 +748,7 @@ class RelayCheckApp:
         if findings:
             worst = findings[0]
             top = f"\n最严重的一条：{worst.get('id', '')}  {worst.get('title', '')}"
-        self._show_card(verdict, plain + top, counts)
+        self._show_card(verdict, plain + top, counts, _family_lines(report))
         self._log("")
         self._log(f"报告：{self.last_out_dir / 'report.md'}")
         self._log(f"原始：{self.last_out_dir / 'report.json'}")

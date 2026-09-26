@@ -352,6 +352,129 @@ def test_card_survives_an_unknown_verdict() -> None:
 # ----------------------------------------------------------------- window itself
 
 
+def test_the_card_lists_what_each_model_said_it_was() -> None:
+    """The family clue is the one result a non-expert actually takes away.
+
+    The identity probe's per-model claims only reached the window as a finding
+    *title* (「模型自称的厂商与售卖名称不一致」); the claims themselves, and the
+    quote that produced them, stayed in ``report.json``. Showing them is what
+    makes this tool's own caveat — 家族级线索，不能当判决书 — checkable rather than
+    merely asserted: the reader sees that the "wrong" answer is stock
+    "I was created by OpenAI" boilerplate and understands why it cannot carry a
+    verdict.
+    """
+    if not _need_gui():
+        return
+
+    report = {
+        "findings": [
+            {
+                "id": "id-100",
+                "evidence": {
+                    "contradictions": [
+                        {
+                            "model": "deepseek-chat",
+                            "expected_family": "deepseek",
+                            "reported_family": ["minimax"],
+                            "quote": "I was developed by MiniMax.",
+                        }
+                    ]
+                },
+            }
+        ],
+        "results": [
+            {
+                "probe": "identity",
+                "data": {
+                    "observations": {
+                        "gpt-4o": {
+                            "expected_family": "openai",
+                            "self_reported_families": ["openai"],
+                            "confirmed_families": [],
+                            "verdict": "consistent",
+                        },
+                        "deepseek-chat": {
+                            "expected_family": "deepseek",
+                            "self_reported_families": ["minimax"],
+                            "confirmed_families": ["minimax"],
+                            "verdict": "contradiction",
+                        },
+                    }
+                },
+            },
+            # A probe that is not ``identity`` must be ignored, not misread.
+            {"probe": "twins", "data": {"observations": {"x": {"verdict": "contradiction"}}}},
+        ],
+    }
+
+    lines = G._family_lines(report)
+    assert len(lines) == 2, lines
+    # The contradiction leads, and carries the exact sentence the probe quoted —
+    # read out of the finding's own evidence, never re-derived here.
+    assert lines[0].startswith("  ! "), lines[0]
+    assert "deepseek-chat" in lines[0], lines[0]
+    assert "minimax" in lines[0], lines[0]
+    assert "I was developed by MiniMax." in lines[0], lines[0]
+    # A self-report that matches its sales name is reported as matching, not
+    # silently dropped, and its quote is not paraded as a clue.
+    assert lines[1].startswith("  = "), lines[1]
+    assert "gpt-4o" in lines[1], lines[1]
+    assert "I was created by OpenAI." not in lines[1], "一致的自述不该被当线索引用"
+
+    # Alignment: Consolas covers ASCII but Tk substitutes a proportional font for
+    # the CJK runs, so the 售卖 column only lines up if the (always-ASCII) model
+    # name is padded to the batch width first. Two different name lengths are the
+    # whole point of the check.
+    assert len({line.index("售卖") for line in lines}) == 1, lines
+    # And the quotes have to stack too: the family names are ASCII but the
+    # punctuation around them is not, so the column is measured, not counted.
+    quote_cols = {
+        G._display_width(line.split("「")[0]) for line in lines if "「" in line
+    }
+    assert len(quote_cols) == 1, lines
+
+    # Nothing to say must produce nothing — not an empty「家族线索：」header.
+    assert G._family_lines({}) == []
+    assert G._family_lines({"results": [{"probe": "twins", "data": {}}]}) == []
+    # An unseen verdict degrades to "no usable self-report" rather than a blank
+    # line or a crash, and a failed collection says so.
+    unseen = G._family_lines(
+        {"results": [{"probe": "identity", "data": {"observations": {"m": {"verdict": "brand-new"}}}}]}
+    )
+    assert unseen and "没拿到可用的自述" in unseen[0], unseen
+    failed = G._family_lines(
+        {"results": [{"probe": "identity", "data": {"observations": {"m": {"error": "boom"}}}}]}
+    )
+    assert failed and "自述采集失败" in failed[0], failed
+
+
+def test_switching_cards_clears_the_previous_runs_family_lines() -> None:
+    """The card is one reused widget, so a stale clue must not survive into it.
+
+    Run twice in a row, stop the second run, and without this the *first* relay's
+    self-reports would still be sitting under 「运行失败」 — attributing one
+    endpoint's model identities to another.
+    """
+    if not _need_gui():
+        return
+    root = _tk_root()
+    if root is None:
+        _skip("no display available")
+        return
+    try:
+        app = G.RelayCheckApp(root)
+        app._show_card("检测到中等问题", "说明", {"medium": 1}, ["  ! m  售卖 a，自称 b"])
+        assert "自称 b" in app.family_label["text"], app.family_label["text"]
+        assert "家族线索" in app.family_label["text"]
+
+        # Every path with no family data must clear it — including 「正在检测…」
+        # and 「运行失败」, which never call _family_lines at all.
+        app._show_card("运行失败", "说明", None)
+        assert app.family_label["text"] == "", app.family_label["text"]
+    finally:
+        root.update_idletasks()
+
+
 def test_window_builds_with_the_expected_initial_state() -> None:
     if not _need_gui():
         return
