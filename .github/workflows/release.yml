@@ -1,0 +1,81 @@
+name: Release
+
+# Publishing is the one action in this project that cannot be undone. PyPI never
+# lets a version number be reused — not even after a yank — so a mistake here is
+# permanent and the fix is to burn the next number. Everything below exists to
+# turn "oops" into a failed job instead of a bad release.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and check the distributions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: Check the metadata PyPI will actually read
+        run: |
+          python -m pip install twine
+          python -m twine check dist/*
+
+      # The classic irreversible mistake: tag v0.2.0 while pyproject.toml still
+      # says 0.1.0, or tag v0.1.0 twice. PyPI accepts neither state as fixable.
+      # Reading the version back out of the built wheel is the only check that
+      # cannot be fooled by a stale file, because it inspects the artefact that
+      # would really be uploaded.
+      - name: The tag and the built version must agree
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          built="$(basename dist/*.whl)"
+          built="${built#relaycheck-}"
+          built="${built%%-*}"
+          echo "tag=$tag built=$built"
+          if [ "$tag" != "$built" ]; then
+            echo "::error::tag v$tag does not match the built version $built — refusing to publish"
+            exit 1
+          fi
+
+      - name: Show what will be uploaded
+        run: ls -l dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/relaycheck
+    permissions:
+      # Trusted Publishing: PyPI verifies this workflow's OIDC identity, so no
+      # API token is stored in the repository, in a secret, or on anyone's disk.
+      # There is nothing here to leak and nothing to rotate.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1

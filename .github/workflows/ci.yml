@@ -52,6 +52,14 @@ jobs:
       - name: Console script must be on PATH and report a version
         run: relaycheck --version
 
+      # Fast and dependency-free, and it guards the module whose failure mode is
+      # silent: pick aliases of one backend and the twin probes compare a model
+      # against itself, find nothing, and report a clean relay. Running this
+      # before the mock suite means a selection regression goes red in seconds
+      # instead of after the multi-minute `dead` scenario.
+      - name: Model selection unit tests
+        run: python -u tests/test_selection.py
+
       - name: Self-test against the eight mock relays
         run: python -u tests/test_mock_relay.py
 

@@ -620,8 +620,84 @@ def test_unstable_self_report_is_not_an_accusation() -> None:
     assert entries[0]["named_family"] == ["anthropic"], entries[0]
 
 
+def test_model_autodiscovery_runs_without_models_flag() -> None:
+    """``--models`` is optional, and the branch that omits it had no test.
+
+    Every other check in this file builds its own ``ProbeContext`` with an
+    explicit model list, because those checks are about probe behaviour. That
+    left the path a first-time user actually takes — no ``--models``, models
+    discovered from ``/v1/models`` — never executed by the suite. Its failure
+    mode is quiet: the wrong models get picked, the audit still finishes, and the
+    report still prints a verdict.
+
+    The mock advertises three models from three different vendors, so asking for
+    two slots must return one from each rather than the first two catalogue
+    entries. Asserted on the written ``report.json`` (the machine artefact) and
+    on the progress line (what the user sees).
+    """
+    import json
+    import os
+    import subprocess
+    import tempfile
+
+    server = _Server("clean")
+    tmp = tempfile.mkdtemp(prefix="relaycheck-autodiscovery-")
+    try:
+        env = dict(os.environ)
+        env["PYTHONIOENCODING"] = "utf-8"
+        env.pop("RELAYCHECK_API_KEY", None)
+        env.pop("OPENAI_API_KEY", None)
+        root = Path(__file__).resolve().parent.parent
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "relaycheck.cli",
+                "-u",
+                server.base_url,
+                "-k",
+                mock_relay.TEST_API_KEY,
+                # No --models: that omission is the whole point of this check.
+                "--max-models",
+                "2",
+                "--probes",
+                "reliability",
+                "--reliability-samples",
+                "2",
+                "--delay",
+                "0",
+                "--out-dir",
+                tmp,
+            ],
+            cwd=str(root),
+            env=env,
+            capture_output=True,
+            timeout=180,
+        )
+        stdout = proc.stdout.decode("utf-8", "replace")
+        stderr = proc.stderr.decode("utf-8", "replace")
+        assert "Traceback" not in stderr, f"自动发现模型时 CLI 抛异常：\n{stderr}"
+        assert proc.returncode == 0, (
+            f"自动发现模型时 CLI 没有正常收尾：exit={proc.returncode}\n{stderr}\n{stdout}"
+        )
+
+        expected = ["gpt-4o", "claude-3-5-sonnet"]
+        report = json.loads((Path(tmp) / "report.json").read_text(encoding="utf-8"))
+        assert report["models_tested"] == expected, report["models_tested"]
+        assert report["models_available_count"] == len(mock_relay.CLEAN_MODELS), (
+            "可用模型数不是 /v1/models 返回的个数："
+            f"{report['models_available_count']} != {len(mock_relay.CLEAN_MODELS)}"
+        )
+        assert "受测 2 个: gpt-4o[openai], claude-3-5-sonnet[anthropic]" in stdout, (
+            f"进度行没有报出实际选择：\n{stdout}"
+        )
+    finally:
+        server.close()
+
+
 def _main() -> int:
     checks = [
+        test_model_autodiscovery_runs_without_models_flag,
         test_fraudulent_relay_is_caught,
         test_fraudulent_relay_reports_markup,
         test_params_detects_all_ignored_parameters,

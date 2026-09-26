@@ -5,7 +5,7 @@
 
 ## [0.1.0] — 未发布
 
-首个版本。11 个探针，8 个本地模拟场景，14 项验收。
+首个版本。11 个探针，8 个本地模拟场景，15 项端到端验收，外加 15 项模型选择单元测试。
 
 ### 探针
 
@@ -73,10 +73,12 @@
 - 「六种结局」表把 `CLEAN` / 没跑成 / 没有可判定内容 / 该站不可复现 / 值得记录但不构成指控 /
   发现异常分开列清楚。
 
-### 验收（`tests/test_mock_relay.py`，14 项）
+### 验收（`tests/test_mock_relay.py` 15 项端到端 + `tests/test_selection.py` 15 项单元）
 
 - `fraudulent` 必须被抓出来：≥1 条 `CRITICAL`，且是具体的 finding id。
 - `clean` / `same-vendor` / `slow` / `dead` / `reasoning` / `noisy` / `unstable-self`
   必须**零误报**（`same-vendor` 允许一条 `LOW` 别名提示）。
 - `dead` 永远不能被报成 `CLEAN`。
 - CLI 在 cp936 控制台下必须正常收尾并退出 `0`。
+- 省略 `--models` 时，受测模型由 `/v1/models` 按**厂商多样性**选出，而不是照目录顺序取前 N 个
+  （`tests/test_selection.py`）。

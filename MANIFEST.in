@@ -9,5 +9,9 @@ include README.md
 include README.en.md
 include CHANGELOG.md
 include SECURITY.md
+# Not needed to build, but the sdist carries every root document so the archive
+# is self-describing: someone reading a copy of the source should be able to see
+# how a release is cut without going back to the repository.
+include RELEASING.md
 recursive-include tests *.py
 recursive-include examples *.md

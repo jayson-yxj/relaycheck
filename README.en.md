@@ -561,6 +561,12 @@ and our token budget is not evidence about their parameters.
   line contained a glyph cp936 cannot encode (`✓`), which raised `UnicodeEncodeError` **inside the
   probe loop** — so a crash ended with status 1, the exact code reserved for "findings at or above
   `--fail-on`". From a shell, a typography bug and a real accusation looked identical.
+- `test_model_autodiscovery_runs_without_models_flag` asserts that **without `--models`** — the path
+  a first-time user takes — the models really are drawn from `/v1/models` for vendor diversity: the
+  mock advertises three models from three vendors, so `--max-models 2` must take one of each rather
+  than the first two catalogue entries. This one guards a **silent** failure: picking the wrong
+  models raises no error, the probes end up comparing one backend against itself, and the report
+  says the relay looks clean. A wrong selection is the only failure class with no visible symptom.
 
 ```bash
 python tests/mock_relay.py --port 8123 --scenario fraudulent --verbose
@@ -589,7 +595,8 @@ relaycheck/
     context.py     Whether a long input is silently truncated (head/tail markers + ascending rungs)
 tests/
   mock_relay.py        Mock relays (eight scenarios)
-  test_mock_relay.py   End-to-end acceptance (14 tests)
+  test_mock_relay.py   End-to-end acceptance (15 tests)
+  test_selection.py    Model selection units (15 tests, no network, no server)
 examples/
   report-*.md          Four real tool outputs (swap / honest / dead / not reproducible)
 .github/workflows/

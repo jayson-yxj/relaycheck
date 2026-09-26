@@ -516,6 +516,11 @@ python tests/test_mock_relay.py
   这条守的是另一类混淆：进度行里有个 cp936 编不出来的字符（`✓`），它会在探针循环中间抛
   `UnicodeEncodeError`，于是**一次崩溃以退出码 1 收场，和「发现了高于阈值的问题」撞在一起**。
   从 shell 里看，一个排版 bug 和一条真实指控长得一模一样。
+- `test_model_autodiscovery_runs_without_models_flag` 断言**不带 `--models`** 时（第一次用的人
+  走的就是这条路）模型真的是从 `/v1/models` 按厂商多样性挑出来的：mock 摆出 3 个不同厂商的
+  模型，`--max-models 2` 必须各取一个，而不是照目录顺序取前两个。
+  这条守的是一种**沉默的**失败：挑错了模型不会报错，探针会拿同一个后端跟自己比，然后报告
+  说这家站很干净。选择错误是唯一一类「没有任何可见症状」的错误。
 
 ```bash
 python tests/mock_relay.py --port 8123 --scenario fraudulent --verbose
@@ -544,7 +549,8 @@ relaycheck/
     context.py     长输入是否被静默截断（文首/文末双标记 + 升序阶梯）
 tests/
   mock_relay.py        模拟中转站（八个场景）
-  test_mock_relay.py   端到端验收（14 项）
+  test_mock_relay.py   端到端验收（15 项）
+  test_selection.py    模型选择单元测试（15 项，不联网、不起服务）
 examples/
   report-*.md          四份真实工具输出（掉包 / 诚实 / 死站 / 不可复现）
 .github/workflows/
