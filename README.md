@@ -555,8 +555,10 @@ examples/
   report-*.md          四份真实工具输出（掉包 / 诚实 / 死站 / 不可复现）
 .github/workflows/
   ci.yml               3.9 / 3.11 / 3.13 × Linux，外加 Windows 与 macOS 各一条腿
+  release.yml          打 tag 时经 Trusted Publishing 发到 PyPI（仓库里不存任何凭据）
 SECURITY.md            安全边界、报告里有什么、怎么报漏洞
 CHANGELOG.md           行为变更，尤其是 finding id 与严重程度的语义变化
+RELEASING.md           给维护者看：一次性配置与发布步骤
 ```
 
 > `families.py` 单独成文件是有原因的：`selection.py`（挑跨厂商模型）、`tokenizer.py`

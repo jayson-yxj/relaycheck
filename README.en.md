@@ -601,8 +601,10 @@ examples/
   report-*.md          Four real tool outputs (swap / honest / dead / not reproducible)
 .github/workflows/
   ci.yml               3.9 / 3.11 / 3.13 on Linux, plus one Windows and one macOS leg
+  release.yml          Trusted Publishing to PyPI on a tag (no credentials in the repo)
 SECURITY.md            Security boundaries, what a report does and does not contain, how to report
 CHANGELOG.md           Behavioural changes, especially finding-id and severity semantics
+RELEASING.md           For maintainers: one-time setup and the release steps
 ```
 
 > `families.py` is a separate file for a reason: `selection.py` (picking cross-vendor models),
