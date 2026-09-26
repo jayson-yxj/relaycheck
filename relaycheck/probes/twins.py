@@ -93,7 +93,25 @@ class TwinsProbe(Probe):
         max_models = int(ctx.option("twins_max_models", self.DEFAULT_MAX_MODELS))
         models = list(ctx.models)[:max_models]
         if len(models) < 2:
-            result.error = "需要至少 2 个模型才能做双胞胎比对"
+            # A first-party endpoint that exposes exactly one model is not
+            # broken, and neither are we. Setting ``result.error`` here made
+            # ``reporter.py`` render "探针崩溃" and the CLI count the probe as
+            # failed, which reads as "the tool broke" when the truth is "this
+            # endpoint does not sell two models, so there is nothing to
+            # compare". That is a hole in the audit, and holes are INFO.
+            self._find(
+                result,
+                id="twins-000",
+                title="双胞胎比对未能进行",
+                severity=Severity.INFO,
+                confidence=Confidence.CONFIRMED,
+                summary=(
+                    f"这次只拿到 {len(models)} 个模型，至少需要 2 个才能互相比对。"
+                    "这一项没有被检验——只卖一个模型的端点本来就没有第二个可比方，"
+                    "这既不是「没问题」，也不是工具出错。"
+                ),
+                evidence={"models_requested": list(models)},
+            )
             return result
 
         repeats = max(1, int(ctx.option("twins_repeats", 2)))
@@ -297,11 +315,33 @@ class TwinsProbe(Probe):
                     "也可能是把一个后端当成两个档位卖。仅凭输出比对无法区分这两种情况，"
                     "因此这里不下结论。若你把它们当作不同档位付了不同的价钱，值得追问。"
                 )
+            elif fam_a is not None and fam_a == fam_b:
+                # Same claimed vendor, byte-identical output, but no tokenizer
+                # fingerprint to back it up: the tokenizer probe was not run, it
+                # failed, or the upstream never reported ``prompt_tokens``, so
+                # ``tokenizer_groups`` came back empty (``:220``). That is the
+                # twins-101 situation with one piece of corroboration missing —
+                # not a different conclusion. Two names from one vendor that
+                # answer identically are exactly what an honest alias pair looks
+                # like, and a relay selling only one vendor's models never gets
+                # a second evidence source to clear it. MEDIUM here would accuse
+                # an endpoint over evidence we simply did not collect.
+                finding_id = "twins-101"
+                severity, confidence = Severity.LOW, Confidence.SUSPECTED
+                verdict = (
+                    "两个名称属于同一厂商的模型，在全部开放性提示上输出逐字节一致"
+                    "（这次没有可用的 tokenizer 指纹作为旁证）。"
+                    "这**可能是合法的同义词别名**（同一套权重挂在两个名字下），"
+                    "也可能是把一个后端当成两个档位卖。仅凭输出比对无法区分这两种"
+                    "情况，因此这里不下结论。若你把它们当作不同档位付了不同的价钱，"
+                    "值得追问。"
+                )
             else:
                 severity, confidence = Severity.MEDIUM, Confidence.SUSPECTED
                 verdict = (
-                    "两个模型的输出完全一致。若它们声称是不同规模/不同代际的模型，"
-                    "这不正常；若只是同一模型的不同别名，则属正常。"
+                    "两个模型的输出完全一致，但它们各自声称的厂商无法确认"
+                    "（至少一个名字不在已知厂商名单里）。若它们声称是不同规模/"
+                    "不同代际的模型，这不正常；若只是同一模型的不同别名，则属正常。"
                 )
 
             self._find(

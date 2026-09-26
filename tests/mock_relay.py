@@ -195,6 +195,7 @@ class _State:
         reasoning_tokens: int | None = None,
         panel: bool = True,
         throttle: bool = False,
+        strip_usage_for: tuple[str, ...] = (),
     ) -> None:
         self.scenario = scenario
         self.api_key = api_key
@@ -240,6 +241,16 @@ class _State:
         #: pacing, and does not report 「可用性正常」 for a run in which nothing
         #: succeeded either.
         self.throttle = throttle
+        #: ``strip_usage_for`` names models whose chat responses come back
+        #: without a ``usage`` block, which is what a gateway that speaks
+        #: Anthropic-shaped usage — or one that drops usage on streamed
+        #: responses — looks like while running the real model. It exists to
+        #: prove that "this model's tokenizer fingerprint could not be measured"
+        #: is reported as INFO and never as a MEDIUM accusation of substitution.
+        #: Named per model, not global: if *every* model lost its usage there
+        #: would be nothing left to fingerprint and the probe would take its
+        #: all-missing branch instead.
+        self.strip_usage_for = tuple(strip_usage_for)
         #: The ``noisy`` scenario models an honest relay whose backend cannot
         #: repeat itself: the same request at ``temperature=0`` twice gives two
         #: different answers. Nothing is dropped and nothing is swapped — the
@@ -557,6 +568,12 @@ def _make_handler(state: _State) -> type[BaseHTTPRequestHandler]:
                 "choices": choices,
                 "usage": usage,
             }
+            if str(body.get("model") or model) in state.strip_usage_for:
+                # A gateway that speaks Anthropic-shaped usage, or one that
+                # drops it on streaming responses, returns a perfectly good
+                # completion with no ``usage`` at all. relaycheck must read that
+                # as "this model's fingerprint could not be measured".
+                payload.pop("usage", None)
             if body.get("tools") and not state.fraudulent:
                 # Honest relay: actually route the tool call.
                 tools = body.get("tools") or []
@@ -918,6 +935,7 @@ def serve(
     reasoning_tokens: int | None = None,
     panel: bool = True,
     throttle: bool = False,
+    strip_usage_for: tuple[str, ...] = (),
 ) -> ThreadingHTTPServer:
     """Start the mock relay on ``port``.
 
@@ -931,6 +949,10 @@ def serve(
 
     ``throttle=True`` makes every chat request come back 429, which is what an
     official first-party endpoint does when a probe hits it every 0.4 s.
+
+    ``strip_usage_for=("gpt-4o-mini",)`` drops the ``usage`` block from that
+    model's chat responses, which is what a gateway speaking Anthropic-shaped
+    usage looks like while running the real model.
     """
     state = _State(
         scenario,
@@ -939,6 +961,7 @@ def serve(
         reasoning_tokens=reasoning_tokens,
         panel=panel,
         throttle=throttle,
+        strip_usage_for=strip_usage_for,
     )
     return _MockRelayServer(("127.0.0.1", port), _make_handler(state))
 

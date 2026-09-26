@@ -244,7 +244,8 @@ def test_empty_catalogue_yields_nothing() -> None:
 def test_ambiguous_names_resolve_the_same_way_every_time() -> None:
     """A name claiming two vendors must classify identically across runs.
 
-    ``claimed_family`` breaks the tie by sorted order (``families.py:58``), so
+    ``claimed_family`` resolves a name that names two vendors by the longest
+    matching keyword, and breaks a genuine tie by sorted order, so
     ``openai/claude-3-5-sonnet`` — the vendor-prefixed style some relays use —
     always resolves to ``anthropic``. If it did not, the same catalogue audited
     twice would pick different models, and two reports of one relay would not be
@@ -255,6 +256,25 @@ def test_ambiguous_names_resolve_the_same_way_every_time() -> None:
     first = select_models(ALIAS_HEAVY + ["openai/claude-3-5-sonnet"], 6)
     second = select_models(ALIAS_HEAVY + ["openai/claude-3-5-sonnet"], 6)
     assert first == second, f"同一目录两次选择结果不同：{first} vs {second}"
+
+
+def test_a_distilled_model_name_belongs_to_the_vendor_it_is_named_after() -> None:
+    """``deepseek-r1-distill-qwen-32b`` is sold by DeepSeek, not by Alibaba.
+
+    Both vendors are named in the string. Classifying it as ``alibaba`` by
+    sorted order made a response that said ``deepseek-r1`` look like a
+    cross-vendor swap, which is a MEDIUM ``echo-100`` against a relay that did
+    nothing wrong. The family whose own name occupies the most of the string
+    wins, and both spellings must agree or the comparison is meaningless.
+    """
+    assert claimed_family("deepseek-r1-distill-qwen-32b") == "deepseek"
+    assert claimed_family("deepseek-r1") == "deepseek"
+    # Same vendor through the distillation, so echo must not call it a swap.
+    from relaycheck.probes.echo import _classify
+
+    verdict, family = _classify("deepseek-r1-distill-qwen-32b", "deepseek-r1")
+    assert verdict == "same_vendor", verdict
+    assert family == "deepseek"
 
 
 def test_selection_is_deterministic_across_repeats() -> None:
@@ -298,6 +318,7 @@ def _main() -> int:
         test_all_non_chat_list_still_yields_candidates,
         test_empty_catalogue_yields_nothing,
         test_ambiguous_names_resolve_the_same_way_every_time,
+        test_a_distilled_model_name_belongs_to_the_vendor_it_is_named_after,
         test_selection_is_deterministic_across_repeats,
         test_limit_of_one_picks_the_first_family,
         test_describe_selection_marks_unknown_families,

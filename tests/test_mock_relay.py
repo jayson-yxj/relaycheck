@@ -903,6 +903,99 @@ def test_reproducibility_requires_an_identical_answer() -> None:
     assert not _reproduces_itself("", "")
 
 
+def test_a_single_model_endpoint_is_not_a_crashed_probe() -> None:
+    """One model is a hole in the audit, not a broken tool.
+
+    Regression: ``twins.run`` set ``result.error = "需要至少 2 个模型…"`` and
+    returned. The reporter renders any ``result.error`` as 「探针崩溃」 and the CLI
+    counts it as a failed probe, so an official endpoint that publishes exactly
+    one model — ``api.deepseek.com`` in a quiet moment, any single-model vendor —
+    looked like relaycheck itself had fallen over. The reader got a crash notice
+    instead of the one fact that mattered: the twin check never ran.
+    """
+    report = run_audit("clean", ["gpt-4o"], probe_names=["twins"])
+    ids = {f.id for f in report.all_findings}
+    print("\n[one-model]", {k: v for k, v in report.counts.items() if v}, sorted(ids))
+
+    result = next(r for r in report.results if r.probe == "twins")
+    assert result.error is None, f"单模型端点被渲染成探针崩溃：{result.error!r}"
+    assert "twins-000" in ids, "单模型端点没有如实上报「双胞胎比对未能进行」（twins-000）"
+    assert "twins-clean" not in ids, "没有第二个可比方，却给出了「未发现同一后端」的 CLEAN"
+
+    accusatory = [
+        f for f in report.all_findings if f.severity not in (Severity.CLEAN, Severity.INFO)
+    ]
+    assert not accusatory, "单模型端点被误报：" + ", ".join(
+        f"{f.id}({f.severity.value})" for f in accusatory
+    )
+
+
+def test_same_vendor_aliases_survive_without_tokenizer_data() -> None:
+    """A one-vendor alias pair is LOW even when nothing corroborates it.
+
+    Regression: the final ``else`` in ``twins.run`` swallowed every pair that was
+    neither cross-vendor nor tokenizer-matched. ``tokenizer_groups`` is empty
+    whenever the tokenizer probe did not run (``--probes twins``), failed, or the
+    upstream never reported ``prompt_tokens`` — so an honest relay selling one
+    vendor's lineup collected a MEDIUM 「两个模型的输出完全一致」 for a legitimate
+    alias pair, with the single piece of evidence that would have cleared it
+    simply never collected.
+    """
+    report = run_audit("same-vendor", ["gpt-4o", "gpt-4o-mini"], probe_names=["twins"])
+    ids = {f.id for f in report.all_findings}
+    print("\n[same-vendor/twins-only]", {k: v for k, v in report.counts.items() if v})
+
+    probe = next(r for r in report.results if r.probe == "twins")
+    assert probe.data.get("tokenizer_groups_considered") == [], (
+        "这条测试的前提是没有任何 tokenizer 旁证，实际拿到了 "
+        f"{probe.data.get('tokenizer_groups_considered')!r}"
+    )
+
+    assert "twins-100" not in ids, "同厂商别名在缺 tokenizer 旁证时被当成掉包（twins-100）"
+    assert "twins-101" in ids, "同厂商别名未被如实记录为低可信度观察（twins-101）"
+
+    accusatory = [
+        f
+        for f in report.all_findings
+        if f.severity not in (Severity.CLEAN, Severity.INFO, Severity.LOW)
+    ]
+    assert not accusatory, "缺 tokenizer 旁证时同厂商别名仍被误报：" + ", ".join(
+        f"{f.id}({f.severity.value})" for f in accusatory
+    )
+
+
+def test_missing_usage_is_not_an_accusation() -> None:
+    """A gateway that omits ``usage`` is a compatibility gap, not a swap.
+
+    Regression: ``tok-001`` fired at MEDIUM whenever one model reported
+    ``prompt_tokens`` and another did not. Gateways that speak Anthropic-shaped
+    usage — and gateways that drop usage from streamed responses — hit that while
+    running the real model, and the report turned "this model's fingerprint could
+    not be measured" into an accusation of substitution.
+    """
+    report = run_audit(
+        "clean",
+        ["gpt-4o", "claude-3-5-sonnet", "deepseek-chat"],
+        probe_names=["tokenizer"],
+        strip_usage_for=("deepseek-chat",),
+    )
+    ids = {f.id for f in report.all_findings}
+    print("\n[no-usage]", {k: v for k, v in report.counts.items() if v}, sorted(ids))
+
+    tok001 = [f for f in report.all_findings if f.id == "tok-001"]
+    assert tok001, "有模型缺 usage、其余正常，却没有报出这件事（tok-001 缺失）"
+    assert tok001[0].severity is Severity.INFO, (
+        f"缺 usage 被报到了 {tok001[0].severity.value}；这只是测不出来，不是掉包的证据"
+    )
+
+    accusatory = [
+        f for f in report.all_findings if f.severity not in (Severity.CLEAN, Severity.INFO)
+    ]
+    assert not accusatory, "缺 usage 的中转站被误报：" + ", ".join(
+        f"{f.id}({f.severity.value})" for f in accusatory
+    )
+
+
 def _main() -> int:
     checks = [
         test_model_autodiscovery_runs_without_models_flag,
@@ -911,14 +1004,20 @@ def _main() -> int:
         test_params_detects_all_ignored_parameters,
         test_clean_relay_produces_no_false_positives,
         test_twins_prompts_are_open_ended,
+        test_endpoint_without_a_billing_panel_is_never_reported_as_clean,
+        test_rate_limiting_is_not_reported_as_an_unstable_relay,
         test_slow_relay_does_not_hang_the_audit,
         test_same_vendor_aliases_are_not_accused,
+        test_same_vendor_aliases_survive_without_tokenizer_data,
+        test_missing_usage_is_not_an_accusation,
         test_dead_relay_is_never_reported_as_clean,
         test_context_probe_catches_silent_truncation,
         test_a_refusal_to_list_a_marker_is_not_a_truncated_prefix,
         test_reproducibility_requires_an_identical_answer,
         test_reasoning_relay_is_not_falsely_accused,
+        test_reasoning_that_outlives_the_retry_budget_is_not_an_accusation,
         test_noisy_relay_is_not_falsely_accused,
+        test_a_single_model_endpoint_is_not_a_crashed_probe,
         test_echo_probe_compares_the_reported_model_name,
         test_unstable_self_report_is_not_an_accusation,
         test_cli_survives_a_legacy_console_encoding,

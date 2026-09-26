@@ -51,12 +51,28 @@ def detect_family(text: str) -> set[str]:
 
 
 def claimed_family(model_name: str) -> str | None:
-    """Best-effort guess of the family a *model name* claims to belong to."""
-    families = detect_family(model_name)
-    if len(families) == 1:
-        return next(iter(families))
-    if families:
-        # Ambiguous names resolve deterministically by sorted order so that two
-        # runs of the same audit classify a name identically.
-        return sorted(families)[0]
-    return None
+    """Best-effort guess of the family a *model name* claims to belong to.
+
+    A name can mention more than one vendor without being ambiguous about who
+    sells it: ``deepseek-r1-distill-qwen-32b`` is a DeepSeek model distilled
+    onto a Qwen base and relays sell it under exactly that string. Resolving it
+    by sorted order picks ``alibaba``, and then a response whose ``model`` field
+    says ``deepseek-r1`` looks like a cross-vendor swap — a MEDIUM accusation
+    against a relay that did nothing wrong.
+
+    The longest matching keyword wins instead: the vendor whose own name
+    occupies the most of the string is the one the name is advertising. Genuine
+    ties (``openai/claude-3-5-sonnet``, where both keywords are the same length)
+    still break by sorted order, so two runs of one audit classify a name
+    identically and two reports stay comparable.
+    """
+    low = model_name.lower()
+    matches: list[tuple[int, str]] = []
+    for family, keywords in FAMILY_KEYWORDS.items():
+        longest = max((len(kw) for kw in keywords if kw in low), default=0)
+        if longest:
+            matches.append((longest, family))
+    if not matches:
+        return None
+    best = max(length for length, _ in matches)
+    return sorted(family for length, family in matches if length == best)[0]

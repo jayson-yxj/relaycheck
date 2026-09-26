@@ -142,18 +142,34 @@ class TokenizerProbe(Probe):
             return result
 
         if missing_usage:
+            # INFO, not MEDIUM. A missing ``usage`` block is a compatibility gap,
+            # not evidence of substitution: gateways that speak Anthropic-shaped
+            # usage, and gateways that omit usage on streaming responses, both
+            # land here while running the real model. The models that did report
+            # usage are still fully fingerprinted by ``_detect_identical_tokenizers``
+            # below, so the substitution check is not lost — only these models'
+            # contribution to it is. "We could not measure this model" must not
+            # render as an accusation, and the wording has to say so.
             self._find(
                 result,
                 id="tok-001",
-                title="部分模型不返回 usage.prompt_tokens",
-                severity=Severity.MEDIUM,
+                title="部分模型不返回 usage.prompt_tokens（无法测量）",
+                severity=Severity.INFO,
                 confidence=Confidence.CONFIRMED,
                 summary=(
                     f"以下模型未返回可解析的 prompt_tokens：{', '.join(missing_usage)}。"
-                    "缺失 usage 会让用户无法自查计费，也会让 tokenizer 指纹检测失效。"
+                    "这些模型的 tokenizer 指纹这一项**没有被检验**——"
+                    "缺 usage 不构成掉包证据，它只是让用户无法自查计费。"
+                    f"其余 {len(fingerprints)} 个模型的指纹已正常采集并参与比对。"
                 ),
-                evidence={"models_without_usage": missing_usage},
-                remediation="官方 OpenAI 兼容 API 必须返回 usage。缺少它属于兼容性缺陷。",
+                evidence={
+                    "models_without_usage": missing_usage,
+                    "fingerprints_collected": len(fingerprints),
+                },
+                remediation=(
+                    "官方 OpenAI 兼容 API 会返回 usage。缺它属于兼容性缺陷，"
+                    "可以要求站方补齐，但它本身不是掉包的证据。"
+                ),
             )
 
         self._detect_identical_tokenizers(result, fingerprints)
