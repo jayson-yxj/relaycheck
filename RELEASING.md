@@ -44,8 +44,8 @@ PyPI 凭据。没有东西可以泄漏，也没有东西需要定期轮换。
 4. 打 tag 并推：
 
    ```bash
-   git tag -a v0.1.0 -m "relaycheck 0.1.0"
-   git push origin v0.1.0
+   git tag -a v0.1.1 -m "relaycheck 0.1.1"
+   git push origin v0.1.1
    ```
 
 5. `release.yml` 会构建 sdist + wheel、跑 `twine check`、校验 **tag 和构建出来的版本号一致**，
