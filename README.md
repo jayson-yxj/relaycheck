@@ -440,10 +440,11 @@ Key 也可以走环境变量：`RELAYCHECK_API_KEY` / `OPENAI_API_KEY`。
 
 1. **相同 tokenizer ≠ 相同权重。** 只证明同家族。必须配合行为比对。
 2. **行为一致可能是缓存，不一定是掉包。** canary 探针就是用来区分这两种情况的。
-3. **模型自述不可靠。** 模型会幻觉自己的身份，非 OpenAI 的模型自称 OpenAI 是常见现象
-   （训练语料所致）。**这不是中转站的问题，官方端点也一样**：`api.deepseek.com` 的
-   `deepseek-flash` 被问及来历时稳定地回答「I'm ChatGPT, powered by OpenAI's GPT-5」。
-   所以 `id-100` 只是 `INFO` 的 `疑似`，标题里写着
+3. **模型自述不可靠，官方端点也一样不可靠。** 模型的自我认知来自训练语料，与它实际跑在
+   谁的集群上无关。DeepSeek 系列自称 OpenAI 是**预期行为**——蒸馏训练留下的口音，不是
+   异常。官方 `api.deepseek.com` 的 `deepseek-flash` 被问及来历时稳定地回答
+   「I'm ChatGPT, powered by OpenAI's GPT-5」，这反而正说明它是官方端点。正因为如此，
+   `id-100` 只是 `INFO` 的 `疑似`，标题里写着
    「线索，非结论」：它只负责记下「这个模型说自己是谁」，结论由 `tokenizer` 和 `twins` 出。
    它一路从 MEDIUM 降到 LOW、再降到 INFO，理由都是同一条：**撑不起指控的东西不该出现在
    指控栏里**，否则每一个转售 DeepSeek 的诚实站都会挨一条 LOW。
@@ -521,9 +522,10 @@ Key 也可以走环境变量：`RELAYCHECK_API_KEY` / `OPENAI_API_KEY`。
 
 这次跑动顺带证实了三件只有官方端点才能证实的事：
 
-1. **模型自述完全没有证据价值。** 官方 `deepseek-flash` 被问及自身来历时，稳定地回答
-   「I'm ChatGPT, powered by OpenAI's GPT-5」。如果自述算证据，这个探针就会指控
-   DeepSeek 掉包自己。这就是 `id-100` 只能是 INFO 的全部理由。
+1. **模型自述完全没有证据价值，而这一点在官方端点上体现得最清楚。** 官方 `deepseek-flash`
+   被问及自身来历时，稳定地回答「I'm ChatGPT, powered by OpenAI's GPT-5」——这是蒸馏训练
+   留下的口音，说明不了它在谁的集群上跑。如果自述算证据，这个探针就会指控 DeepSeek
+   掉包自己。这就是 `id-100` 只能是 INFO 的全部理由。
 2. **`temperature=0` 下输出不可复现是上游行为，不是中转站的过错。** 官方端点两次完全相同
    的请求返回了不同的文字。诚实中转站上出现的 `params-104` / `stream-104`，成因在这里。
 3. **`n` / `tools` 报 400 是上游策略。** 官方端点同样拒收这两个参数。

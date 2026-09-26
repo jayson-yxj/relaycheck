@@ -496,7 +496,7 @@ make accusations you cannot support.
 
 1. **Same tokenizer ≠ same weights.** It only proves same family. Behavioural comparison is required.
 2. **Identical behaviour may be caching, not a swap.** The canary probe exists to separate the two.
-3. **Model self-reports are unreliable.** Models hallucinate their own identity, and a non-OpenAI model answering "OpenAI" is extremely common (it is what the training data is full of). **This is not a relay's defect; official endpoints do it too**: on `api.deepseek.com`, `deepseek-flash` answers "I'm ChatGPT, powered by OpenAI's GPT-5" every time. So `id-100` is an `INFO` *suspected* finding whose title literally says "a lead, not a conclusion": it only records *what the model says it is*, and `tokenizer` / `twins` produce the actual verdict. It has gone MEDIUM → LOW → INFO for one and the same reason: **something that cannot carry an accusation does not belong in the accusation column**, or every honest station reselling DeepSeek collects a LOW. There is also a second gate: **a self-report counts only if the model says it twice.** When a model names a foreign vendor, the probe asks the same question again; only a second answer naming the same foreign vendor yields `id-100`, and an inconsistent answer is downgraded to `id-101` (INFO, worded to say **it accuses no one of a swap**).
+3. **Model self-reports are unreliable — official endpoints included.** A model's sense of identity comes from its training corpus, not from whose cluster it runs on. DeepSeek models claiming to be OpenAI is **expected behaviour** — an accent left by distillation training, not an anomaly. On the official `api.deepseek.com`, `deepseek-flash` answers "I'm ChatGPT, powered by OpenAI's GPT-5" every time; that is in fact a sign it *is* the official endpoint. Which is exactly why `id-100` is an `INFO` *suspected* finding whose title literally says "a lead, not a conclusion": it only records *what the model says it is*, and `tokenizer` / `twins` produce the actual verdict. It has gone MEDIUM → LOW → INFO for one and the same reason: **something that cannot carry an accusation does not belong in the accusation column**, or every honest station reselling DeepSeek collects a LOW. There is also a second gate: **a self-report counts only if the model says it twice.** When a model names a foreign vendor, the probe asks the same question again; only a second answer naming the same foreign vendor yields `id-100`, and an inconsistent answer is downgraded to `id-101` (INFO, worded to say **it accuses no one of a swap**).
 4. **An ignored parameter may just be a compatibility-layer defect**, not necessarily malice. The report distinguishes these (`params-100` MEDIUM / `params-101` INFO).
 5. **Some models may not support certain capabilities** (e.g. `logprobs`, `tools`). Probes record "explicit error" separately from "silently ignored" — the former is a compatibility gap, the latter is deception. Measured on the official endpoint: `deepseek-flash` returns 400 for `n` and `tools` outright, so those errors cannot be billed to a relay.
 6. **Requests consume your credit.** The full probe set is roughly 210 requests across 6 models. Start with `--probes echo,tokenizer,twins` — `echo` costs two requests per model and is the cheapest hard check in the box.
@@ -546,9 +546,12 @@ up as an accusation:
 
 The same run settled three things that only an official endpoint can settle:
 
-1. **Model self-reports carry no evidential weight at all.** Asked about its own origin, the
-   official `deepseek-flash` answers "I'm ChatGPT, powered by OpenAI's GPT-5" every time. If
-   self-reports counted as evidence, this probe would accuse DeepSeek of swapping itself.
+1. **Model self-reports carry no evidential weight at all — and the official endpoint shows
+   this most clearly.** Asked about its own origin, the official `deepseek-flash` answers
+   "I'm ChatGPT, powered by OpenAI's GPT-5" every time. That is an accent left by distillation
+   training; it says nothing about whose cluster serves the model. If self-reports counted as
+   evidence, this probe would accuse DeepSeek of swapping itself. That is the entire reason
+   `id-100` can only ever be INFO.
 2. **Non-reproducibility at `temperature=0` is upstream behaviour, not a relay's fault.** Two
    identical requests to the official endpoint returned different text. That is where the
    `params-104` / `stream-104` findings on an honest relay come from.

@@ -29,6 +29,9 @@ from .base import (
 _COUNT_PROMPT = (
     "Count from 1 to 400, one number per line, nothing else before or after."
 )
+#: The cap this check hands the model. Deliberately tiny: the honest answer to
+#: ``_COUNT_PROMPT`` is far longer, so a relay that honours the cap has to cut it off.
+_MAX_TOKENS_REQUEST = 16
 _STOP_PROMPT = (
     "Write the digits 0 through 9 in order, separated by single spaces. "
     "Output nothing else."
@@ -303,16 +306,38 @@ class ParamsProbe(Probe):
 
     def _check_max_tokens(self, ctx: ProbeContext, model: str) -> dict[str, Any]:
         comp = ctx.client.chat(
-            model, [{"role": "user", "content": _COUNT_PROMPT}], max_tokens=16, temperature=0
+            model, [{"role": "user", "content": _COUNT_PROMPT}],
+            max_tokens=_MAX_TOKENS_REQUEST, temperature=0
         )
         billed = comp.usage.completion_tokens
         reasoning = comp.usage.reasoning_tokens
         detail: dict[str, Any] = {
-            "requested_max_tokens": 16,
+            "requested_max_tokens": _MAX_TOKENS_REQUEST,
             "billed_completion_tokens": billed,
             "finish_reason": comp.finish_reason,
             "visible_chars": comp.visible_chars,
         }
+        # Direct evidence first — and it is the one shape that still works on a
+        # reasoning model. The server stopped at or below the cap it was handed
+        # *because of a length limit*. A relay that dropped ``max_tokens`` would
+        # have let the model answer the short prompt in full and reported
+        # ``stop``; ``length`` at or below our own number can only be our budget
+        # being enforced. Note this branch is a no-op for non-reasoning models:
+        # ``billed <= 16`` already implied "honoured" under the old ``billed > 24``
+        # test, so nothing there changes.
+        if (
+            billed is not None
+            and billed <= _MAX_TOKENS_REQUEST
+            and comp.finish_reason == "length"
+        ):
+            detail["verdict"] = "honoured"
+            detail["note"] = (
+                f"服务端在 {billed} 个 token 处因长度上限停止，正好落在请求的 "
+                f"max_tokens={_MAX_TOKENS_REQUEST} 以内，说明上限确实被施加了。"
+            )
+            if reasoning:
+                detail["reasoning_tokens"] = reasoning
+            return detail
         if reasoning:
             # On DeepSeek — and on any OpenAI-compatible reasoning endpoint —
             # ``completion_tokens`` *includes* the hidden reasoning tokens, while

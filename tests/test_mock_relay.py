@@ -1165,6 +1165,44 @@ def test_a_throttled_run_is_not_reported_as_a_slow_relay() -> None:
     )
 
 
+def test_a_reasoning_model_that_stops_at_the_cap_is_credited() -> None:
+    """``max_tokens`` is still enforceable on a reasoning backend.
+
+    Regression, found on the official ``api.deepseek.com`` endpoint. Asked for
+    ``max_tokens=16``, ``deepseek-flash`` bills exactly 16 completion tokens — all
+    of them hidden reasoning — returns an empty ``content`` and sets
+    ``finish_reason == "length"``. That shape *is* the proof the cap was applied:
+    a relay that silently dropped ``max_tokens`` would have let the model run on
+    and reported ``"stop"``.
+
+    The check used to bail out on any reasoning model before it ever looked at
+    the number, so this evidence was discarded and the item filed under "样本不可用".
+    That is lost coverage rather than a false accusation, but the premise of the
+    tool is that a verdict has to rest on something measurable, and here it does.
+    The bail-out is still right for a reasoning model that *overshoots* the cap,
+    and still right when there is no usage block at all.
+    """
+
+    report = run_audit("reasoning", ["deepseek-chat"], probe_names=["params"])
+    probe = next(r for r in report.results if r.probe == "params")
+    outcome = probe.data["matrix"]["deepseek-chat"]["max_tokens"]
+    print("\n[max-tokens/reasoning]", outcome)
+
+    assert outcome["finish_reason"] == "length", (
+        f"测试前提不成立：推理模型没有在长度上限处停止，outcome={outcome}"
+    )
+    assert outcome["billed_completion_tokens"] == outcome["requested_max_tokens"], (
+        f"测试前提不成立：计费 token 数没有落在请求的 max_tokens 上，outcome={outcome}"
+    )
+    assert outcome["verdict"] == "honoured", (
+        "服务端在请求的 max_tokens 处因长度上限停止（finish_reason=length），"
+        "这已经是「上限确实被施加」的直接证据，却被记成了未检验：" + str(outcome)
+    )
+    assert outcome.get("reasoning_tokens"), (
+        "推理 token 数没有留在证据里，事后无法复核这条结论是从哪来的"
+    )
+
+
 def _main() -> int:
     checks = [
         test_model_autodiscovery_runs_without_models_flag,
@@ -1183,6 +1221,7 @@ def _main() -> int:
         test_a_starved_billing_sample_is_not_reported_as_clean,
         test_the_billing_probe_grows_the_budget_before_giving_up,
         test_stop_is_not_called_ignored_when_there_is_nothing_to_compare,
+        test_a_reasoning_model_that_stops_at_the_cap_is_credited,
         test_dead_relay_is_never_reported_as_clean,
         test_context_probe_catches_silent_truncation,
         test_a_refusal_to_list_a_marker_is_not_a_truncated_prefix,

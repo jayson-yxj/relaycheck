@@ -16,6 +16,32 @@
   的可复现证据。
 - 文档：`gui/README.md` 里的桌面包体积改成实测区间（本机 14.2 MB，GitHub CI 构建 15.0 MB）。
 
+- 文档：`README.md` / `README.en.md` 把「模型自述不可靠」那一段的**成因**写准了：模型的
+  自我认知来自训练语料，DeepSeek 系列自称 OpenAI 是蒸馏训练留下的口音，与它跑在谁的
+  集群上无关；并点明这**恰好是官方端点**的特征，不是异常。
+
+### 修正：`max_tokens` 在推理模型上被整条丢掉（覆盖率缺口，不是误报）
+
+官方直连端点上发现的缺口：`params-103` 记了「2 项样本不可用」，但其中一项本来是**可以
+判定的**。`deepseek-flash` 在 `max_tokens=16` 下返回的是
+`billed_completion_tokens=16` + `finish_reason="length"` + 空正文——`length` 并且计费数
+正好落在我们请求的上限上，这已经是「上限确实被施加」的直接证据：把 `max_tokens` 丢掉的
+中转站会让模型答完，并把 `finish_reason` 写成 `stop`。
+
+原代码在 `_check_max_tokens` 里把 `if reasoning:` 的门放在数字判断**之前**，于是任何推理
+模型都直接落到 `inconclusive`，这条证据连看都没被看过。现在把「计费数 ≤ 请求的上限
+**且** `finish_reason == "length"`」提到 reasoning 门之前。
+
+这一支对非推理模型是 no-op——`billed <= 16` 在旧的 `billed > 24` 判据下本来就得出
+`honoured`——所以 `fraudulent` / `clean` / `same-vendor` 三条既有结论逐条不变。`if
+reasoning:` 的 bail-out 也照旧保留：推理模型**超出**上限时，`completion_tokens` 把隐藏
+reasoning 也算进去，那仍然量不出来，照样不指控。顺带把散落的 `16` 提成常量
+`_MAX_TOKENS_REQUEST`。
+
+**测试**：新增 `test_a_reasoning_model_that_stops_at_the_cap_is_credited`。`reasoning`
+场景本身就能造出这个形状，因此没有新增第 9 个场景。回退 `params.py` 即失败：
+`assert 'inconclusive' == 'honoured'`。
+
 ### 修正：四处「没有可观测量，却给出了结论」的地方
 
 第三批。前两批修的是**判定条件**，这一批修的是**根本没有测量对象**时仍然下结论的路径。
