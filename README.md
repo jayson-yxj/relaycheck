@@ -3,7 +3,8 @@
 [![CI](https://github.com/jayson-yxj/relaycheck/actions/workflows/ci.yml/badge.svg)](https://github.com/jayson-yxj/relaycheck/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/relaycheck.svg)](https://pypi.org/project/relaycheck/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-<img width="768" height="512" alt="image" src="https://github.com/user-attachments/assets/37d90f17-553f-450f-9696-c703b4520268" />
+<img width="1460" height="644" alt="d615970e3d795decfa7c61f79c08d64a" src="https://github.com/user-attachments/assets/b6082ead-2b26-4621-8c9f-523ffdda4aa2" />
+
 检测 LLM API **中转站**（relay / 代理商 / 聚合站）是否**掉包模型**、是否**虚报计费**。
 
 你付的是 `claude-3-5-sonnet` 的钱，拿到的是不是 `deepseek-chat`？你说 `max_tokens=16`，
