@@ -9,11 +9,21 @@ name: desktop
 # 手动触发：Actions -> desktop -> Run workflow。
 # 用户拿到的是什么：zip 解压 -> relaycheck-desktop\ -> 双击 relaycheck-gui.exe。
 # 目标机器不需要装 Python。
+#
+# 每周还会定时在 main 上跑一次（见下面的 schedule）。这条链路依赖四个外部东西：
+# windows-latest 镜像 + Python 3.12 + PyInstaller + tcl/tk —— 任何一样漂移都会让构建挂掉。
+# 只靠「发版时才跑」的话，你会在最坏的时机发现：tag 已经推了、PyPI 版本号已经烧了
+# （PyPI 不允许复用版本号，见 RELEASING.md）。定时跑把这件事变成某个周二的一次红灯。
 
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+  schedule:
+    # 每周一 03:17 UTC。定时跑在 refs/heads/main 上，所以下面「Attach it to the release」
+    # 那一步靠 startsWith(github.ref, 'refs/tags/') 自动跳过 —— 它只构建、只上传 artifact，
+    # 不会碰任何 Release。分钟数避开 :00，因为 GitHub 的整点排队最拥挤。
+    - cron: "17 3 * * 1"
 
 permissions:
   contents: write

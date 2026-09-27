@@ -46,6 +46,11 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "gui"))
 
 from relaycheck.cli import _make_output_safe  # noqa: E402
+from relaycheck.probes import (  # noqa: E402
+    ALL_PROBES,
+    DEFAULT_PROBE_NAMES,
+    HEAVY_PROBE_NAMES,
+)
 
 # Same reason as in the other two test files: a legacy console code page cannot
 # encode the Chinese failure messages, so an unguarded print() inside a check turns
@@ -987,6 +992,76 @@ def test_the_advanced_panel_starts_closed_and_keeps_its_settings() -> None:
         assert (app.strength_var.get(), app.maxmodels_var.get()) == ("all", "9"), (
             "收起高级面板不能把里面的设置改回默认值"
         )
+    finally:
+        root.update_idletasks()
+
+
+def test_the_expensive_probe_is_not_in_the_default_set() -> None:
+    """The default set is what runs on a first look at a relay nobody has measured.
+
+    ``context`` sends prompts of thousands of tokens up an ascending ladder, so one
+    model can cost more than the other ten probes combined — and a first exploratory
+    audit against an unknown relay is the worst possible moment to spend a stranger's
+    balance on that. It is also the probe most likely to be "helpfully" promoted into
+    the defaults, because silent head truncation is exactly the substitution this
+    tool exists to catch. This test is the brake on that: thorough is something the
+    user opts into, not something we do to their card.
+
+    Deliberately not gated on a display — the invariant is in the registry, and a
+    headless runner should still refuse to let the default set drift.
+    """
+    assert "context" in HEAVY_PROBE_NAMES, HEAVY_PROBE_NAMES
+    assert "context" not in DEFAULT_PROBE_NAMES, (
+        "context 必须保持 opt-in：默认集跑在最不该花使用者钱的那一刻"
+    )
+    # The two sets have to stay disjoint, or the window's "8 项" and "11 项" would be
+    # counting the same probe twice and be wrong in a subtler way.
+    assert not (set(DEFAULT_PROBE_NAMES) & set(HEAVY_PROBE_NAMES)), DEFAULT_PROBE_NAMES
+    assert len(DEFAULT_PROBE_NAMES) + len(HEAVY_PROBE_NAMES) == len(ALL_PROBES)
+
+
+def test_the_strength_labels_name_the_real_probe_counts() -> None:
+    """The window a user reads *before* spending money must not misstate the cost.
+
+    Both radio labels name a number and neither is computed from the registry, so
+    registering a ninth default probe would leave the window still advertising eight.
+    The "all" label matters more: it is the only route to the context probe, so if it
+    understates what it buys, the cost hint sitting next to it is describing a
+    different set than the one that will actually run.
+    """
+    if not _need_gui():
+        return
+    root = _tk_root()
+    if root is None:
+        _skip("no display available")
+        return
+    try:
+        app = G.RelayCheckApp(root)
+        app._toggle_advanced()
+        root.update_idletasks()
+
+        options: dict[str, str] = {}
+        texts: list[str] = []
+        for node in _walk(app.adv_panel):
+            try:
+                texts.append(str(node.cget("text")))
+            except Exception:
+                pass
+            # Only the radios. ttk.Spinbox also answers ``-value`` (with an empty
+            # string) and every ttk widget with a textvariable reports the Tcl
+            # variable's name as its ``-text``, so an unfiltered sweep picks up
+            # ``{'': 'PY_VAR5'}`` and the assertion below stops meaning anything.
+            if node.winfo_class() != "TRadiobutton":
+                continue
+            options[str(node.cget("value"))] = str(node.cget("text"))
+
+        assert set(options) == {"default", "all"}, options
+        assert str(len(DEFAULT_PROBE_NAMES)) in options["default"], options["default"]
+        assert str(len(ALL_PROBES)) in options["all"], options["all"]
+        # The expensive option has to admit that it is the expensive option...
+        assert "贵" in options["all"], options["all"]
+        # ...and say what the extra money buys. "更贵" on its own is just a scare.
+        assert any("上万 token" in text for text in texts), texts
     finally:
         root.update_idletasks()
 

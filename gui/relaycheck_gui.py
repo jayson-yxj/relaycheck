@@ -631,12 +631,24 @@ class RelayCheckApp:
             variable=self.strength_var,
         ).grid(row=0, column=1, sticky="w")
         ttk.Radiobutton(
-            self.adv_panel, text="全面（全部 11 项，请求数明显更多、更慢）",
+            self.adv_panel, text="全面（全部 11 项，更慢、也更贵）",
             value="all", variable=self.strength_var,
         ).grid(row=0, column=2, sticky="w")
 
+        # 「更贵」必须写清楚贵在哪里，否则这个选项只是在吓人。多出来的三项里
+        # params / stream 很便宜，真正花钱的是 context：它按升序阶梯发送上万 token 的
+        # 输入，一次就可能比其余 10 项加起来还贵。它默认不跑，省下的不是时间，是使用者的钱。
+        ttk.Label(
+            self.adv_panel,
+            text=(
+                "多出来的三项里，长输入完整性每次要发上万 token —— 一次就可能比其余 10 项"
+                "加起来还贵，所以默认不跑。"
+            ),
+            foreground="#777777", wraplength=760, justify="left",
+        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 0))
+
         nums = ttk.Frame(self.adv_panel)
-        nums.grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        nums.grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
         ttk.Label(nums, text="最多测几个模型").pack(side="left")
         ttk.Spinbox(nums, from_=1, to=20, width=4, textvariable=self.maxmodels_var).pack(
             side="left", padx=(6, 16)

@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 报告里那些 severity / confidence 是什么意思？
+    url: https://github.com/jayson-yxj/relaycheck/blob/main/README.md
+    about: README 有「诚实的局限」和每条发现的「建议」。LOW / SUSPECTED 的意思是「有线索，撑不起指控」。
+  - name: 安全漏洞（崩溃、注入、Key 泄漏、退出码混淆）
+    url: https://github.com/jayson-yxj/relaycheck/blob/main/SECURITY.md
+    about: 凡是能被远端返回数据触发的本地问题都算安全漏洞，SECURITY.md 写了边界和最小复现方式。
+  - name: 参与开发 / 报误报和漏报
+    url: https://github.com/jayson-yxj/relaycheck/blob/main/CONTRIBUTING.md
+    about: 误报和漏报是这个项目最缺的东西，CONTRIBUTING.md 写了要带哪三样。

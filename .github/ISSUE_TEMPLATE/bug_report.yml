@@ -1,0 +1,81 @@
+name: Bug（工具本身出问题了）
+description: 崩溃、输出乱码、退出码不对、报告结构不对、桌面版起不来
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **如果这个问题能被中转站的返回数据触发**（解析远端内容时崩溃、把远端可控内容
+        写进报告、Key 泄漏进日志或回溯、退出码混淆），它按安全漏洞处理 —— 先读
+        [SECURITY.md](https://github.com/jayson-yxj/relaycheck/blob/main/SECURITY.md)。
+
+        如果它其实是「报了不该报的」或「该报没报」，请改用另外两个模板。
+
+  - type: input
+    id: version
+    attributes:
+      label: relaycheck 版本
+      description: 跑 `relaycheck --version` 的输出。桌面版的话写窗口标题栏里的版本号。
+      placeholder: relaycheck 0.1.7
+    validations:
+      required: true
+
+  - type: input
+    id: env
+    attributes:
+      label: 系统与 Python
+      description: 桌面版请说明是不是用的 `relaycheck-gui.exe`。
+      placeholder: Windows 11 23H2 / Python 3.11.7（或：桌面版 relaycheck-gui.exe）
+    validations:
+      required: true
+
+  - type: input
+    id: command
+    attributes:
+      label: 你跑的命令
+      description: 完整命令行。**请把 API Key 换成 `sk-xxxx`。**
+      placeholder: relaycheck -u https://api.example.com -k sk-xxxx --probes all
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 你期望发生什么 / 实际发生了什么
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: 最小复现
+      description: |
+        优先用本地 mock 复现，它不联网、不花钱、不需要你的 Key：
+
+        ```bash
+        python tests/mock_relay.py --port 8123 --scenario fraudulent --verbose
+        python -m relaycheck.cli -u http://127.0.0.1:8123 -k sk-relaycheck-local-test --probes all
+        ```
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: traceback
+    attributes:
+      label: 完整报错 / 回溯
+      description: 有就贴，没有就写「无」。
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: 确认
+      options:
+        - label: 命令行里的 API Key 我已经换成 `sk-xxxx` 了
+          required: true
+        - label: 我没有附上真实站的完整报告（余额和消费是我的账单）
+          required: true

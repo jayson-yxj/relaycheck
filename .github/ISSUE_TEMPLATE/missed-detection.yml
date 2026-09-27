@@ -1,0 +1,79 @@
+name: 漏报（该报的没报）
+description: 一家明显在掉包的站，relaycheck 说它没问题
+title: "[漏报] "
+labels: ["missed-detection"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        漏报比误报更隐蔽，但**先确认它真的是漏报，而不是「我们没测」**。
+        `relaycheck` 最核心的不变式是：
+
+        > `CLEAN` 必须意味着**已经验证过**。
+        > 「对方没回答」永远不能是 `CLEAN`；「我们没量到」永远不能变成「我们量出了问题」。
+
+        所以在提交之前，先在 `report.json` 里确认那条探针**真的跑了并且真的给了 CLEAN**，
+        而不是报了 `*-000` / `truncated`，或者压根没在 `probes` 列表里。
+
+  - type: input
+    id: version
+    attributes:
+      label: relaycheck 版本
+      description: 跑 `relaycheck --version` 的输出。
+      placeholder: relaycheck 0.1.7
+    validations:
+      required: true
+
+  - type: textarea
+    id: how
+    attributes:
+      label: 你是怎么发现它在掉包的
+      description: |
+        越具体越好：你拿什么和什么比、比出了什么差异、对方的实际行为是什么。
+        这一段决定我们能不能把它变成一条回归测试。
+    validations:
+      required: true
+
+  - type: dropdown
+    id: probe_state
+    attributes:
+      label: 报告里本该抓到它的那条探针，当时是什么状态
+      description: 这一项直接决定这是漏报还是「没测」。
+      options:
+        - 探针跑了，并且给了 CLEAN（真的漏报）
+        - 探针报了 *-000（没查成）—— 那不是 CLEAN
+        - 探针结果带 truncated（时间预算用尽）
+        - 那条探针压根没跑（probes 列表里没有它）
+        - 我不确定 / 报告里看不出来
+    validations:
+      required: true
+
+  - type: textarea
+    id: should_have
+    attributes:
+      label: 哪条探针本该抓到它，为什么没抓到
+      description: |
+        这是最有价值的一栏 —— 它直接告诉我们要加什么检测。写不出精确答案也没关系，
+        写「我猜 twins 应该能看出来，因为……」也有用。
+    validations:
+      required: true
+
+  - type: textarea
+    id: report
+    attributes:
+      label: report.json
+      description: |
+        `--out-dir` 目录里那份。**先删掉 billing 探针的结果**（里面有你的余额和消费记录）。
+      render: json
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: 确认
+      options:
+        - label: 我已经把 report.json 里的 billing 探针结果删掉了（那是我的账单）
+          required: true
+        - label: 我看过那条探针当时的状态，它不是 *-000，也不是压根没跑
+          required: true

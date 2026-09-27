@@ -1,0 +1,80 @@
+name: 误报（对诚实的站报了问题）
+description: relaycheck 报了一条不该报的 MEDIUM 及以上发现
+title: "[误报] "
+labels: ["false-positive"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        这一类 issue 是这个项目最需要的东西。一个对诚实中转站乱叫的工具比没有工具更糟：
+        它会把一次真实的指控洗成噪音。
+
+        **报之前先确认阈值**：`LOW` / `INFO` 不算误报（那是「有线索，撑不起指控」）；
+        `MEDIUM` 及以上才算。完整要带的三样见
+        [CONTRIBUTING.md](https://github.com/jayson-yxj/relaycheck/blob/main/CONTRIBUTING.md)。
+
+  - type: input
+    id: version
+    attributes:
+      label: relaycheck 版本
+      description: 跑 `relaycheck --version` 的输出。
+      placeholder: relaycheck 0.1.7
+    validations:
+      required: true
+
+  - type: input
+    id: finding
+    attributes:
+      label: 哪一条 finding 不该报
+      description: 用 finding id，不要说「它报错了」。一条 issue 只报一条 finding，多了没法收敛。
+      placeholder: twins-100
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: 为什么不该报
+      description: |
+        这条最重要，也最常缺。有效的「为什么」是**外部可核对的事实**，比如：
+        对方文档里写了别名关系 / 我拿官方端点试了也是这个行为 / 证据字段引用的两个样本
+        其实都是空字符串。无效的「为什么」：「我在这家充了钱，它不可能骗我。」
+    validations:
+      required: true
+
+  - type: dropdown
+    id: reproduced_elsewhere
+    attributes:
+      label: 换一个地方试过吗
+      description: 「只有这一家这样」和「官方端点也这样」是完全不同的两条线索。
+      options:
+        - 官方直连端点在同样参数下也是这个行为
+        - 另一家中转站也是这个行为
+        - 只在这一家见过
+        - 没试过
+    validations:
+      required: true
+
+  - type: textarea
+    id: report
+    attributes:
+      label: report.json
+      description: |
+        `--out-dir` 目录里那份 `report.json`（不是 report.md）。
+        **先删掉 billing 探针的结果** —— 里面有你的余额和消费记录，
+        一条命令见 CONTRIBUTING.md。
+      render: json
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: 确认
+      options:
+        - label: 我已经把 report.json 里的 billing 探针结果删掉了（那是我的账单）
+          required: true
+        - label: 这条 finding 的严重度是 MEDIUM 及以上
+          required: true
+        - label: 报告里没有我的 API Key —— 我确认过，或者我知道它本来就不该有
+          required: true

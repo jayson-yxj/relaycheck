@@ -60,9 +60,20 @@ DEFAULT_PROBE_NAMES: tuple[str, ...] = (
     "billing-hidden-reasoning",
 )
 
-#: Heavier probes, opt-in via ``--probes all``. ``context`` sends prompts of
-#: thousands of tokens, which costs real money on a metered relay, so it is never
-#: part of the default set.
+#: Heavier probes, opt-in via ``--probes all``. ``params`` and ``stream`` are only a
+#: few extra requests; ``context`` is the one that actually costs money — it sends
+#: prompts of thousands of tokens up an ascending ladder, so a single model can cost
+#: more than the other ten probes combined.
+#:
+#: Decision (2026-09-27): ``context`` stays opt-in, even though silent head
+#: truncation is exactly the kind of substitution this tool exists to catch. The
+#: default set is what runs on a first, exploratory audit against a relay nobody has
+#: measured yet — the worst possible moment to spend someone's balance on the single
+#: most expensive experiment in the tool. A cheap default that always runs beats a
+#: thorough default people learn to avoid, and silently making it default would also
+#: change the cost of every existing ``relaycheck -u ...`` invocation, which a
+#: read-only tool must not do. The desktop shell states the cost next to the "all"
+#: option instead of hiding it.
 HEAVY_PROBE_NAMES: tuple[str, ...] = ("params", "stream", "context")
 
 # Fail loudly at import time if the default set ever drifts from the registry,

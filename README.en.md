@@ -737,9 +737,9 @@ relaycheck/
     context.py     Whether a long input is silently truncated (head/tail markers + ascending rungs)
 tests/
   mock_relay.py        Mock relays (eight scenarios)
-  test_mock_relay.py   End-to-end acceptance (15 tests)
-  test_selection.py    Model selection units (15 tests, no network, no server)
-  test_gui.py          Desktop shell units (12 tests, skipped without tkinter)
+  test_mock_relay.py   End-to-end acceptance (29 tests)
+  test_selection.py    Model selection units (16 tests, no network, no server)
+  test_gui.py          Desktop shell units (33 tests, skipped without tkinter)
 gui/
   relaycheck_gui.py        The shell: builds argv, runs the child, renders report.json
   relaycheck_cli_entry.py  Console engine entry point (for the GUI's child; not in the pip package)
@@ -752,7 +752,12 @@ examples/
 .github/workflows/
   ci.yml               3.9 / 3.11 / 3.13 on Linux, plus one Windows and one macOS leg
   release.yml          Trusted Publishing to PyPI on a tag (no credentials in the repo)
-  desktop.yml          Builds the desktop zip on a Windows runner and attaches it to the Release
+  desktop.yml          Builds the desktop zip on a tag, and every Monday on main
+.github/ISSUE_TEMPLATE/
+  false-positive.yml   Report a false positive (the thing this project needs most)
+  missed-detection.yml Report a miss
+  bug_report.yml       Something is wrong with the tool itself
+CONTRIBUTING.md        What to attach for a false positive or a miss, and the rules for new probes
 SECURITY.md            Security boundaries, what a report does and does not contain, how to report
 CHANGELOG.md           Behavioural changes, especially finding-id and severity semantics
 RELEASING.md           For maintainers: one-time setup and the release steps

@@ -679,9 +679,9 @@ relaycheck/
     context.py     长输入是否被静默截断（文首/文末双标记 + 升序阶梯）
 tests/
   mock_relay.py        模拟中转站（八个场景）
-  test_mock_relay.py   端到端验收（15 项）
-  test_selection.py    模型选择单元测试（15 项，不联网、不起服务）
-  test_gui.py          桌面壳单元测试（12 项，无 tkinter 时跳过）
+  test_mock_relay.py   端到端验收（29 项）
+  test_selection.py    模型选择单元测试（16 项，不联网、不起服务）
+  test_gui.py          桌面壳单元测试（33 项，无 tkinter 时跳过）
 gui/
   relaycheck_gui.py        桌面壳：拼 argv、跑子进程、读 report.json 渲染结论
   relaycheck_cli_entry.py  控制台引擎入口（GUI 的子进程用，不进 pip 包）
@@ -694,7 +694,12 @@ examples/
 .github/workflows/
   ci.yml               3.9 / 3.11 / 3.13 × Linux，外加 Windows 与 macOS 各一条腿
   release.yml          打 tag 时经 Trusted Publishing 发到 PyPI（仓库里不存任何凭据）
-  desktop.yml          打 tag 时在 Windows runner 上构建桌面版 zip 并挂到 Release
+  desktop.yml          打 tag 时构建桌面版 zip 挂到 Release，每周也在 main 上跑一次
+.github/ISSUE_TEMPLATE/
+  false-positive.yml   报误报（这个项目最缺的东西）
+  missed-detection.yml 报漏报
+  bug_report.yml       工具本身出问题
+CONTRIBUTING.md        报误报 / 漏报要带哪三样，加新探针的约束
 SECURITY.md            安全边界、报告里有什么、怎么报漏洞
 CHANGELOG.md           行为变更，尤其是 finding id 与严重程度的语义变化
 RELEASING.md           给维护者看：一次性配置与发布步骤
@@ -711,6 +716,9 @@ RELEASING.md           给维护者看：一次性配置与发布步骤
 否则一个慢中转站就能把这个探针变成永不停机的黑盒。
 `RelayBudgetExceeded` 必须**单独**捕获，不能掉进泛化的 `except Exception`：那会把
 「我们主动停了」变成「中转站报错了」，也就是一次由我们自己的超时制造的假指控。
+
+报误报、报漏报、加新探针的要求见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。
+**这两类 issue 比任何 feature request 都值钱** —— 这个工具的价值全看它肯不肯对诚实的站闭嘴。
 
 ---
 
