@@ -78,6 +78,38 @@ _ACCENT_HOVER = "#4338ca"
 _ACCENT_SOFT = "#eef2ff"
 _DANGER = "#b42318"
 _DANGER_SOFT = "#fef3f2"
+
+# The rest of the chrome used to spell its colours out at the point of use.  Each
+# one is a *theme* value rather than a one-off: on a dark canvas a hard-coded
+# "#101828" stays light-on-light and the log turns into a grey rectangle.  Naming
+# them here gives every role exactly one place to change, so a theme becomes a
+# rebinding of names instead of a hunt through 1800 lines.
+_ON_ACCENT = "#ffffff"            # label drawn on a filled accent button
+_BUTTON_SECONDARY_BG = "#f2f4f7"
+_BUTTON_SECONDARY_HOVER = "#e4e7ec"
+_BUTTON_DANGER_HOVER = "#fee4e2"
+_BUTTON_DISABLED_BG = "#eaecf0"
+_TRACK = "#eaecf0"                # progress bar trough
+_RULE = "#dddddd"                 # 1px divider inside a card
+_SHADE_FALLBACK = "#dddddd"       # _shade() could not parse its input
+_SPEND_WARN = "#a1541a"           # the "this spends your own quota" line
+
+#: The log pane is deliberately the inverse of the page: a dark viewport the
+#: evidence lands in.  Backgrounds and foregrounds are pairs — never swap one half.
+_LOG_BG = "#101828"
+_LOG_BORDER = "#344054"
+_LOG_HEAD_BG = "#101828"
+_LOG_HEAD_FG = "#f2f4f7"
+_LOG_HINT_FG = "#667085"
+_LOG_TEXT_BG = "#0b1220"
+_LOG_TEXT_FG = "#d0d5dd"
+_LOG_CARET = "#ffffff"
+_LOG_SELECT_BG = "#344054"
+_LOG_SELECT_FG = "#ffffff"
+
+#: Shown when the CLI reports a verdict string this build does not know.
+_VERDICT_FALLBACK: tuple[str, str, str] = ("#344054", "#f2f4f7", "")
+
 _FONT = "Microsoft YaHei UI"
 _MONO_FONT = "Consolas"
 
@@ -213,7 +245,7 @@ def _shade(color: str, factor: float) -> str:
     try:
         parts = [int(color[i : i + 2], 16) for i in (1, 3, 5)]
     except (ValueError, IndexError):
-        return "#dddddd"
+        return _SHADE_FALLBACK
     return "#" + "".join(f"{max(0, min(255, int(c * factor))):02x}" for c in parts)
 
 
@@ -476,7 +508,7 @@ class ExactProgress(tk.Frame):
 
     def __init__(self, parent: tk.Misc, length: int = 220) -> None:
         super().__init__(
-            parent, width=length, height=8, background="#eaecf0",
+            parent, width=length, height=8, background=_TRACK,
             bd=0, highlightthickness=0,
         )
         self._maximum = 1.0
@@ -610,7 +642,7 @@ class RelayCheckApp:
         style.configure("Relay.TPanedwindow", background=_APP_BG)
         style.configure(
             "Relay.Horizontal.TProgressbar",
-            troughcolor="#eaecf0",
+            troughcolor=_TRACK,
             background=_ACCENT,
             lightcolor=_ACCENT,
             darkcolor=_ACCENT,
@@ -644,9 +676,9 @@ class RelayCheckApp:
     ) -> tk.Button:
         """Create one flat, keyboard-focusable button with a real visual role."""
         palettes = {
-            "primary": (_ACCENT, "#ffffff", _ACCENT_HOVER),
-            "secondary": ("#f2f4f7", _TEXT, "#e4e7ec"),
-            "danger": (_DANGER_SOFT, _DANGER, "#fee4e2"),
+            "primary": (_ACCENT, _ON_ACCENT, _ACCENT_HOVER),
+            "secondary": (_BUTTON_SECONDARY_BG, _TEXT, _BUTTON_SECONDARY_HOVER),
+            "danger": (_DANGER_SOFT, _DANGER, _BUTTON_DANGER_HOVER),
             "ghost": (_APP_BG, _TEXT_MUTED, _ACCENT_SOFT),
             "card": (_SURFACE, _TEXT, _ACCENT_SOFT),
         }
@@ -756,7 +788,7 @@ class RelayCheckApp:
             )
         else:
             button.configure(
-                state="disabled", background="#eaecf0",
+                state="disabled", background=_BUTTON_DISABLED_BG,
                 foreground=_TEXT_FAINT, cursor="arrow",
             )
 
@@ -1041,7 +1073,7 @@ class RelayCheckApp:
             warn,
             text="⚠  检测会消耗你自己的 API 额度（一般几十到上百次请求）。",
             background=_APP_BG,
-            foreground="#a1541a",
+            foreground=_SPEND_WARN,
             font=(_FONT, 9, "bold"),
         ).pack(anchor="w")
 
@@ -1052,7 +1084,7 @@ class RelayCheckApp:
         ignore ``background``, so on a tinted card (``#fee2e2`` and friends) it
         keeps the theme's grey and reads as a stray line from another window.
         """
-        rule = tk.Frame(parent, height=1, bd=0, background="#dddddd")
+        rule = tk.Frame(parent, height=1, bd=0, background=_RULE)
         rule.pack(fill="x", padx=(20, 16), pady=0)
         return rule
 
@@ -1196,25 +1228,25 @@ class RelayCheckApp:
         self.sash_hint = tk.Frame(outer, height=3, background=_SASH_HINT)
         self.sash_hint.pack(fill="x", padx=20)
         self.log_wrap = tk.Frame(
-            outer, background="#101828", bd=0,
-            highlightthickness=1, highlightbackground="#344054",
+            outer, background=_LOG_BG, bd=0,
+            highlightthickness=1, highlightbackground=_LOG_BORDER,
         )
         self.log_wrap.pack(fill="both", expand=True, padx=20, pady=(10, 16))
-        log_head = tk.Frame(self.log_wrap, background="#101828", bd=0)
+        log_head = tk.Frame(self.log_wrap, background=_LOG_HEAD_BG, bd=0)
         log_head.pack(fill="x", padx=12, pady=(9, 7))
         tk.Label(
-            log_head, text="运行详情", background="#101828", foreground="#f2f4f7",
+            log_head, text="运行详情", background=_LOG_HEAD_BG, foreground=_LOG_HEAD_FG,
             font=(_FONT, 9, "bold"),
         ).pack(side="left")
         tk.Label(
-            log_head, text="拖动上方分隔线可调整高度", background="#101828",
-            foreground="#667085", font=(_FONT, 8),
+            log_head, text="拖动上方分隔线可调整高度", background=_LOG_HEAD_BG,
+            foreground=_LOG_HINT_FG, font=(_FONT, 8),
         ).pack(side="right")
         self.log = ScrolledText(
             self.log_wrap, wrap="word", height=9, font=(_MONO_FONT, 9),
-            state="disabled", background="#0b1220", foreground="#d0d5dd",
-            insertbackground="#ffffff", selectbackground="#344054",
-            selectforeground="#ffffff", relief="flat", bd=0,
+            state="disabled", background=_LOG_TEXT_BG, foreground=_LOG_TEXT_FG,
+            insertbackground=_LOG_CARET, selectbackground=_LOG_SELECT_BG,
+            selectforeground=_LOG_SELECT_FG, relief="flat", bd=0,
             highlightthickness=0, padx=10, pady=8,
         )
         self.log.pack(fill="both", expand=True, padx=10, pady=(0, 10))
@@ -1505,7 +1537,7 @@ class RelayCheckApp:
         family_rows: Sequence[tuple[str, str, str]] | None = None,
         actions: bool = False,
     ) -> None:
-        fg, bg, _ = VERDICT_STYLE.get(verdict, ("#344054", "#f2f4f7", ""))
+        fg, bg, _ = VERDICT_STYLE.get(verdict, _VERDICT_FALLBACK)
         self._tint(bg)
         self.card_accent.configure(background=fg)
         self.verdict_label.configure(text=verdict, foreground=fg)
@@ -1517,7 +1549,7 @@ class RelayCheckApp:
         # means "this did not".
         for key, tag in _SEVERITY_CHIPS:
             count = (counts or {}).get(key, 0)
-            fill_bg, fill_fg = _SEVERITY_FILL.get(key, ("#475569", "#ffffff"))
+            fill_bg, fill_fg = _SEVERITY_FILL.get(key, _SEVERITY_FILL["info"])
             self.chips[key].configure(
                 text=f"{tag} {count}",
                 background=fill_bg if count > 0 else _SURFACE,
