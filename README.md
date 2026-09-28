@@ -3,7 +3,7 @@
 [![CI](https://github.com/jayson-yxj/relaycheck/actions/workflows/ci.yml/badge.svg)](https://github.com/jayson-yxj/relaycheck/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/relaycheck.svg)](https://pypi.org/project/relaycheck/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-<img width="1460" height="644" alt="d615970e3d795decfa7c61f79c08d64a" src="https://github.com/user-attachments/assets/b6082ead-2b26-4621-8c9f-523ffdda4aa2" />
+<img width="1672" height="941" alt="image" src="https://github.com/user-attachments/assets/05f6e8c0-1214-47b6-890d-d9ca62464502" />
 
 检测 LLM API **中转站**（relay / 代理商 / 聚合站）是否**掉包模型**、是否**虚报计费**。
 
