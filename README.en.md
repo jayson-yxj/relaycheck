@@ -739,14 +739,17 @@ tests/
   mock_relay.py        Mock relays (eight scenarios)
   test_mock_relay.py   End-to-end acceptance (29 tests)
   test_selection.py    Model selection units (16 tests, no network, no server)
-  test_gui.py          Desktop shell units (33 tests, skipped without tkinter)
+  test_gui.py          Desktop shell units (34 tests, skipped without tkinter)
 gui/
   relaycheck_gui.py        The shell: builds argv, runs the child, renders report.json
   relaycheck_cli_entry.py  Console engine entry point (for the GUI's child; not in the pip package)
   relaycheck_gui.spec      PyInstaller: one COLLECT, two executables
   build.ps1                One-command build (creates .venv-build)
   e2e_bundle.py            Source / engine exe / windowed exe run one audit, compared field by field
+  preview_ui.py            Six-state UI preview: no requests, no report
+  make_icon.py             Generates relaycheck.ico / relaycheck.png (needs Pillow)
   README.md                Desktop notes and distribution caveats
+  DESIGN.md                Colour / typography / motion rules (read before touching the UI)
 examples/
   report-*.md          Four real tool outputs (swap / honest / dead / not reproducible)
 .github/workflows/

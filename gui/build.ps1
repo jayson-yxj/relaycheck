@@ -62,9 +62,15 @@ function Invoke-Native {
         if ($Quiet) {
             $null = & $Exe @Arguments 2>&1
         } else {
-            & $Exe @Arguments
+            # A PowerShell function writes command stdout into its own return
+            # pipeline.  Callers assign this function to `$code`, so unredirected
+            # output would turn `$code` into an array of log lines plus the real
+            # exit code — and a successful verbose test would be reported as a
+            # failure.  Keep the output visible while returning only LASTEXITCODE.
+            & $Exe @Arguments | Out-Host
         }
-        return $LASTEXITCODE
+        $nativeExitCode = $LASTEXITCODE
+        return $nativeExitCode
     } finally {
         $ErrorActionPreference = $previous
     }

@@ -2,6 +2,8 @@
 
 给不装 Python、也不用命令行的人一个能双击跑的东西。
 
+改外观之前先读 `DESIGN.md`（颜色、排版、动效的规则）；仓库根的 `AGENTS.md` 是总约束。
+
 ```powershell
 .\gui\build.ps1
 ```
@@ -143,11 +145,27 @@ PyInstaller 的 bootloader 和 tcl/tk 在非 ASCII 路径上出过问题，历�
 
 跑起来之后，exe 本身只依赖 Windows 10 及以上，**目标机器不需要装 Python**。
 
+## 不发请求的界面预览
+
+改布局、颜色或动效时，不必拿真实 API Key 跑一遍。`preview_ui.py` 把静态假数据交给
+正式窗口的渲染方法，只画界面，不创建客户端、不发送请求、不写报告：
+
+```powershell
+python gui\preview_ui.py initial
+python gui\preview_ui.py advanced
+python gui\preview_ui.py running
+python gui\preview_ui.py clean
+python gui\preview_ui.py problem
+python gui\preview_ui.py failure
+```
+
+它不是第二套报告逻辑；结论文案、严重度徽章和家族线索仍由 `RelayCheckApp` 原来的方法绘制。
+
 ## 测试
 
 分两层，都不碰真站。
 
-**`tests\test_gui.py`** —— 33 项，不需要构建产物，CI 的五条腿都会跑（没有 tkinter
+**`tests\test_gui.py`** —— 34 项，不需要构建产物，CI 的五条腿都会跑（没有 tkinter
 的机器，比如 headless Linux runner，会干净地 skip 掉）。它钉的是界面自己决定的东西：
 
 * **key 绝不进命令行。** 把 `subprocess.Popen` 换掉，真的跑一次

@@ -453,6 +453,26 @@ def test_the_card_lists_what_each_model_said_it_was() -> None:
     assert failed and "自述采集失败" in failed[0], failed
 
 
+def test_clean_and_info_records_are_not_called_the_most_serious_problem() -> None:
+    """A clean card must not contradict itself in the next sentence."""
+    if not _need_gui():
+        return
+
+    harmless = [
+        {"id": "bill-200", "title": "面板可读取", "severity": "info"},
+        {"id": "rel-clean", "title": "可用性正常", "severity": "clean"},
+    ]
+    assert G._top_finding_line(harmless) == ""
+
+    mixed = harmless + [
+        {"id": "twins-100", "title": "跨厂商输出一致", "severity": "high"}
+    ]
+    line = G._top_finding_line(mixed)
+    assert "最严重的一条" in line
+    assert "twins-100" in line and "跨厂商输出一致" in line
+    assert "rel-clean" not in line and "bill-200" not in line
+
+
 def test_switching_cards_clears_the_previous_runs_family_lines() -> None:
     """The card is one reused widget, so a stale clue must not survive into it.
 
@@ -599,9 +619,15 @@ def test_a_severity_chip_is_only_filled_when_it_actually_happened() -> None:
         app._show_card("未检测到问题", "说明", {"info": 2, "clean": 7})
         card_bg = G.VERDICT_STYLE["未检测到问题"][1]
 
+        # Semantic colour belongs to the conclusion, not to every piece of
+        # evidence underneath it. A full green card reads like a certificate of
+        # innocence, which this family-level audit explicitly cannot issue.
+        assert str(app.card_header["background"]) == card_bg
+        assert str(app.card["background"]) == G._SURFACE
+
         for key in ("critical", "high", "medium", "low"):
             chip = app.chips[key]
-            assert str(chip["background"]) == card_bg, f"{key} 计数为 0，不该上色"
+            assert str(chip["background"]) == G._SURFACE, f"{key} 计数为 0，不该上色"
             assert str(chip["foreground"]) == G._SEVERITY_EMPTY_FG, key
             assert chip["text"].endswith(" 0"), chip["text"]
         for key in ("info", "clean"):
@@ -612,9 +638,9 @@ def test_a_severity_chip_is_only_filled_when_it_actually_happened() -> None:
             assert str(chip["background"]) != card_bg, key
         assert "INFO=2" in app._card_text() and "CLEAN=7" in app._card_text()
 
-        # The hairline has to belong to the card it sits on: the card background
-        # changes with the verdict, and a fixed grey rule clashes on some of them.
-        assert str(app.chips_rule["background"]) == G._shade(card_bg, 0.9)
+        # Evidence sections are neutral, so their dividers use the neutral border
+        # rather than extending the verdict tint through the entire card.
+        assert str(app.chips_rule["background"]) == G._BORDER_SOFT
         assert str(app.chips_rule["background"]) != card_bg
     finally:
         root.update_idletasks()

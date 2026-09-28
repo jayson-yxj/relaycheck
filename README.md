@@ -681,14 +681,17 @@ tests/
   mock_relay.py        模拟中转站（八个场景）
   test_mock_relay.py   端到端验收（29 项）
   test_selection.py    模型选择单元测试（16 项，不联网、不起服务）
-  test_gui.py          桌面壳单元测试（33 项，无 tkinter 时跳过）
+  test_gui.py          桌面壳单元测试（34 项，无 tkinter 时跳过）
 gui/
   relaycheck_gui.py        桌面壳：拼 argv、跑子进程、读 report.json 渲染结论
   relaycheck_cli_entry.py  控制台引擎入口（GUI 的子进程用，不进 pip 包）
   relaycheck_gui.spec      PyInstaller：一个 COLLECT，两个 exe
   build.ps1                一键构建（自建 .venv-build）
   e2e_bundle.py            源码 / 引擎 exe / 窗口 exe 跑同一份审计，逐字段比对
+  preview_ui.py            六态界面预览：不发请求、不写报告
+  make_icon.py             生成 relaycheck.ico / relaycheck.png（需要 Pillow）
   README.md                桌面版说明与分发注意事项
+  DESIGN.md                颜色 / 排版 / 动效的规则（改界面前先读）
 examples/
   report-*.md          四份真实工具输出（掉包 / 诚实 / 死站 / 不可复现）
 .github/workflows/
