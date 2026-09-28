@@ -227,6 +227,13 @@ python gui\preview_ui.py clean --theme dark
   `~/.relaycheck/ui.json`，本文件有 19 处是那么建的；所以模块导入时就把这个查找指到一个
   不存在的路径上，默认主题说了算。顺手钉住「只是把窗口建起来」不会写用户 home 目录——
   写只发生在真的按了那个开关之后。
+* **碰控件的测试不许假设这台机器有显示器。** CI 的 ubuntu 腿装得上 tkinter 却**没有
+  DISPLAY**：`tk.Tk()` 失败、`_tk_root()` 返回 None，而 `_need_gui()` 只检查「tkinter 能
+  不能 import」，照样放行；紧接着 `tk.PhotoImage` 就抛 `RuntimeError: Too early to create
+  image: no default root window`。本机有显示器，这类错误只在远端红，代价是十几分钟一轮。
+  所以有一条静态检查拿 `ast` 扫 `tests/test_gui.py` **自己**：凡是直接碰控件的测试，函数体
+  里必须有 `_tk_root()` 或 `_isolated_window(`（后者内部自己确认过）。它故意不用 tkinter，
+  恰好在出问题的那条腿上也会跑。
 * **构建脚本和 sdist 的两个环境坑。** `build.ps1` 必须有 UTF-8 BOM；`MANIFEST.in` 必须
   覆盖 spec 引用到的每种资产后缀。这两条在 CI 的 en-US runner 上都**不会**报错，
   所以只能这样钉死。

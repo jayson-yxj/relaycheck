@@ -1485,6 +1485,55 @@ def test_the_theme_toggle_shows_the_theme_you_will_get() -> None:
         assert app.theme_btn.cget("text") == "深色"
 
 
+def test_every_test_that_touches_a_widget_confirms_there_is_a_display_first() -> None:
+    """碰了 tk 控件的测试，必须先自己确认「这台机器上有显示器」。
+
+    这条是拿真实事故换来的。CI 上 ubuntu 三条腿红、Windows 和 macOS 绿，报的是::
+
+        RuntimeError: Too early to create image: no default root window
+
+    原因很窄：ubuntu 跑器 **装得上 tkinter，但没有 DISPLAY**。于是 ``tk.Tk()`` 失败、
+    ``_tk_root()`` 返回 None —— 而 ``_need_gui()`` 只检查「tkinter 能不能 import」，它
+    照样通过。任何 ``tk.PhotoImage`` / ``tk.Toplevel`` / ``RelayCheckApp`` 接着就炸。
+
+    这类错误在本机永远看不见（本机有显示器），只能靠 CI 花十几分钟告诉你。所以把它
+    变成一条本地就差得出来的静态检查：拿 ``ast`` 扫这个文件自己，凡是直接碰控件的测试
+    函数，函数体里必须出现 ``_tk_root()`` 或者 ``_isolated_window(``（后者内部自己确认）。
+
+    故意**不用 tkinter**，这样它恰好在出问题的那条腿上也会跑。
+    """
+    needs_display = (
+        "G.theme_icon(", "G.RelayCheckApp(", "G.ExactProgress(",
+        "tk.Toplevel(", "tk.PhotoImage(", ".winfo_",
+    )
+    own_name = "test_every_test_that_touches_a_widget_confirms_there_is_a_display_first"
+    text = Path(__file__).read_text(encoding="utf-8")
+    lines = text.splitlines()
+
+    examined = 0
+    unguarded: list[str] = []
+    for node in ast.parse(text).body:
+        if not isinstance(node, ast.FunctionDef) or not node.name.startswith("test_"):
+            continue
+        if node.name == own_name:
+            # 这条测试自己的函数体里就写着那串标记，扫自己没有意义。
+            continue
+        body = "\n".join(lines[node.lineno - 1:node.end_lineno])
+        if not any(marker in body for marker in needs_display):
+            continue
+        examined += 1
+        if "_tk_root()" not in body and "_isolated_window(" not in body:
+            unguarded.append(node.name)
+
+    assert examined >= 18, f"只认出 {examined} 条碰控件的测试，扫描逻辑可能失效了"
+    assert not unguarded, (
+        "这些测试碰了 tk 控件却没确认有显示器，在没有 DISPLAY 的机器上会炸："
+        + "、".join(unguarded)
+        + " —— 加上 `if _tk_root() is None: _skip(...); return`，"
+          "或者改用 _isolated_window()"
+    )
+
+
 def test_the_icon_is_drawn_pixel_by_pixel_and_not_borrowed_from_a_font() -> None:
     """☀ 和 ☾ 不在 Microsoft YaHei UI 里。
 
@@ -1492,6 +1541,12 @@ def test_the_icon_is_drawn_pixel_by_pixel_and_not_borrowed_from_a_font() -> None
     的——一个字符能让整行错位。所以太阳和月亮只能自己画，16×16，纯 stdlib。
     """
     if not _need_gui():
+        return
+    if _tk_root() is None:
+        # tkinter 装上了但没有显示器时，PhotoImage 会因为没有默认 root 直接抛
+        # ``RuntimeError: Too early to create image``。这台机器上有显示器，所以
+        # 只有 CI 的 ubuntu 腿会走到这里 —— 忘了这道判断，代价是本地全绿而远端红。
+        _skip("no display available")
         return
     ink, page = "#c9297a", "#ffffff"
     sun = G.theme_icon("sun", ink, page)
