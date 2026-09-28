@@ -169,7 +169,7 @@ python gui\preview_ui.py clean --theme dark
 
 分两层，都不碰真站。
 
-**`tests\test_gui.py`** —— 44 项，不需要构建产物，CI 的五条腿都会跑（没有 tkinter
+**`tests\test_gui.py`** —— 45 项，不需要构建产物，CI 的五条腿都会跑（没有 tkinter
 的机器，比如 headless Linux runner，会干净地 skip 掉）。它钉的是界面自己决定的东西：
 
 * **key 绝不进命令行。** 把 `subprocess.Popen` 换掉，真的跑一次
@@ -219,6 +219,10 @@ python gui\preview_ui.py clean --theme dark
   而它能坑人的方式只有一种：代码改了、文档还写着旧值，于是一条**已经不存在的规则**继续
   被人遵守。38 行十六进制数字手抄必然漂，所以让测试来抄——它用 `ast` 直接解析源码，
   **不用 tkinter**，所以没有显示器的 CI 腿也真跑。
+* **一套测试的颜色不能取决于上一个人点过什么。** 不传 `theme=` 建窗口会去读
+  `~/.relaycheck/ui.json`，本文件有 19 处是那么建的；所以模块导入时就把这个查找指到一个
+  不存在的路径上，默认主题说了算。顺手钉住「只是把窗口建起来」不会写用户 home 目录——
+  写只发生在真的按了那个开关之后。
 * **构建脚本和 sdist 的两个环境坑。** `build.ps1` 必须有 UTF-8 BOM；`MANIFEST.in` 必须
   覆盖 spec 引用到的每种资产后缀。这两条在 CI 的 en-US runner 上都**不会**报错，
   所以只能这样钉死。

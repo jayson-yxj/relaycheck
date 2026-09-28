@@ -80,6 +80,19 @@ if _TK_ERROR is None:
 else:  # pragma: no cover - depends on the platform
     G = None  # type: ignore[assignment]
 
+#: Hermetic theme file for the whole module.
+#:
+#: ``RelayCheckApp(root)`` without a ``theme=`` argument calls ``load_theme()``,
+#: which reads ``~/.relaycheck/ui.json``. Nineteen tests here build an app that
+#: way, so without this line the suite would quietly take on the colours whoever
+#: ran it last happened to pick by clicking the toggle. A test that passes on a
+#: machine that has never clicked it and fails on one that has is a flake wearing
+#: a costume. Point the lookup at a path that cannot exist and the default wins.
+_HERMETIC_THEME_DIR: str | None = None
+if G is not None:
+    _HERMETIC_THEME_DIR = tempfile.mkdtemp(prefix="relaycheck-gui-tests-")
+    os.environ[G._THEME_ENV] = str(Path(_HERMETIC_THEME_DIR) / "ui.json")
+
 
 def _skip(reason: str) -> None:
     if pytest is not None:
@@ -1633,6 +1646,25 @@ def test_the_design_document_lists_the_colours_that_are_in_the_code() -> None:
         assert palettes["DARK"][role] == dark, (
             f"{role} 的深色：文档 {dark}，代码 {palettes['DARK'][role]}"
         )
+
+
+def test_building_the_window_never_writes_a_theme_file() -> None:
+    """构造窗口只**读**偏好，写只发生在真的按了那个开关之后。
+
+    这条同时守着两件事。一是本文件那 19 个不传 ``theme=`` 的测试：它们的颜色必须来自
+    默认主题，而不是来自这台机器上最后一个人点过的主题 —— 否则一套测试在这台机器上
+    绿、在那台机器上红。二是「Key 不落盘」那句承诺：窗口自己建起来就动用户的 home
+    目录，是那种没人会去查的越界。
+    """
+    if not _need_gui():
+        return
+    assert _HERMETIC_THEME_DIR is not None
+    assert G.load_theme() == G._DEFAULT_THEME, (
+        "模块级隔离没生效：load_theme() 读到了真实用户目录里的选择"
+    )
+
+    with _isolated_window("light") as (_top, _app, tmp):
+        assert not (tmp / "ui.json").exists(), "只是把窗口建起来就写了一个主题文件"
 
 
 # --------------------------------------------------------------------- runner
