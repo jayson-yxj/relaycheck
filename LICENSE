@@ -19,14 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-NOTE ON USE
-
-relaycheck sends requests to third-party services using credentials supplied by
-its operator. Those requests consume the operator's quota and are subject to the
-target service's terms of service. Only run it against endpoints you are
-authorised to test, and do not use its output to make an accusation you cannot
-support with the evidence it actually collected. Every finding carries an
-explicit confidence level for exactly this reason; respect it.

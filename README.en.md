@@ -789,7 +789,8 @@ Read [`SECURITY.md`](SECURITY.md) before you aim this at anything. Three points:
 
 - **Use your own key, against a station you already pay for.** The tool sends read-only chat
   requests: it posts no messages, changes no settings, and performs no writes against billing
-  endpoints. Its only side effect is that **those requests are genuinely billed to your account**.
+  endpoints. Its only side effect is that **those requests are genuinely billed to your account**,
+  and they remain subject to that service's terms of service.
 - **Your API key never reaches a report.** `relaycheck/reporter.py` contains no reference to
   `api_key`; reports carry the target URL and nothing else about your credential. But they do
   contain **your** account's balance, spend and usage history — publicise a report and you
