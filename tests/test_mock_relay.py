@@ -100,11 +100,15 @@ def run_audit(
     *,
     options: dict[str, Any] | None = None,
     probe_names: list[str] | None = None,
+    max_retries: int | None = None,
     **serve_kwargs: Any,
 ) -> Report:
     server = _Server(scenario, **serve_kwargs)
     try:
-        client = RelayClient(server.base_url, mock_relay.TEST_API_KEY, delay_between_requests=0.0)
+        client_kwargs: dict[str, Any] = {"delay_between_requests": 0.0}
+        if max_retries is not None:
+            client_kwargs["max_retries"] = max_retries
+        client = RelayClient(server.base_url, mock_relay.TEST_API_KEY, **client_kwargs)
         ctx = ProbeContext(
             client=client, models=models, max_calls=400, options=dict(options or {})
         )
@@ -368,7 +372,16 @@ def test_dead_relay_is_never_reported_as_clean() -> None:
     worthless: the one case where you most need the tool to speak up is the one
     where it says nothing is wrong.
     """
-    report = run_audit("dead", CLEAN_MODELS)
+    # max_retries=0 on purpose. This test asserts which finding ids come back
+    # from a relay that never answers -- not how many times the client retried a
+    # 503 on the way there. Every 503 retry costs a 2-second backoff (the mock
+    # sends no Retry-After, so client._retry_after_seconds falls back to 2.0),
+    # and a full audit is ~206 requests, so the default three retries made this
+    # one test cost 289 seconds on Windows and over 300 on macOS. That is not a
+    # budget the suite can afford: it is what a CI job spends its whole
+    # timeout-minutes on. Dropping the retries exercises the same probe logic
+    # against the same dead upstream and lands on the same ids.
+    report = run_audit("dead", CLEAN_MODELS, max_retries=0)
     ids = {f.id for f in report.all_findings}
     print("\n[dead]", {k: v for k, v in report.counts.items() if v})
     for f in report.all_findings:
