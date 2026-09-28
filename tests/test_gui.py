@@ -36,10 +36,14 @@ Run with pytest, or directly::
 
 from __future__ import annotations
 
+import contextlib
 import inspect
 import io
+import json
+import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -712,22 +716,23 @@ def test_a_vendors_colour_is_the_same_on_every_run() -> None:
     assert all(colour in G.PALETTE["family_fallback"] for colour in spread)
 
 
+def _luma(colour: str) -> float:
+    """WCAG relative luminance, so two colours can be compared for lightness."""
+    channels = [int(colour[i : i + 2], 16) / 255 for i in (1, 3, 5)]
+    linear = [
+        c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+        for c in channels
+    ]
+    return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+
 def _contrast(a: str, b: str) -> float:
     """WCAG relative-luminance ratio.
 
     A local copy on purpose: the tests must not reach for the contrast scripts that
     live outside the repo, or CI would depend on my scratch directory.
     """
-
-    def _lum(colour: str) -> float:
-        channels = [int(colour[i : i + 2], 16) / 255 for i in (1, 3, 5)]
-        linear = [
-            c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
-            for c in channels
-        ]
-        return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
-
-    hi, lo = sorted((_lum(a), _lum(b)), reverse=True)
+    hi, lo = sorted((_luma(a), _luma(b)), reverse=True)
     return (hi + 0.05) / (lo + 0.05)
 
 
@@ -1318,6 +1323,267 @@ def test_the_divider_is_placed_after_the_form_and_not_on_top_of_it() -> None:
     finally:
         top.update_idletasks()
         top.destroy()
+
+
+# ------------------------------------------------- 第四刀：主题开关 / 画布渐变
+
+
+@contextlib.contextmanager
+def _isolated_window(theme: str = "light"):
+    """一个用完就扔的窗口，主题文件指向临时目录。
+
+    测试绝不能碰 ``~/.relaycheck/ui.json``：跑一遍测试就把开发者自己那个窗口下次
+    开成什么颜色改掉了，是最讨厌的一种副作用。环境变量是 ``relaycheck_gui`` 唯一
+    的覆盖口，存在 / 还原都走它。
+    """
+    _need_gui()
+    import tkinter as tk
+
+    root = _tk_root()
+    if root is None:
+        _skip("no display available")
+    with tempfile.TemporaryDirectory() as tmp:
+        previous = os.environ.get(G._THEME_ENV)
+        os.environ[G._THEME_ENV] = str(Path(tmp) / "ui.json")
+        top = tk.Toplevel(root)
+        try:
+            yield top, G.RelayCheckApp(top, theme=theme), Path(tmp)
+        finally:
+            top.update_idletasks()
+            top.destroy()
+            if previous is None:
+                os.environ.pop(G._THEME_ENV, None)
+            else:
+                os.environ[G._THEME_ENV] = previous
+
+
+def _chrome_colours(app) -> dict[str, str]:
+    """用户能看出主题变了的那几个面。"""
+    widgets = {
+        "top": app.top,
+        "content": app.content,
+        "theme_btn": app.theme_btn,
+        "start_btn": app.start_btn,
+        "stop_btn": app.stop_btn,
+        "adv_toggle": app.adv_toggle,
+        "status_dot": app.status_dot,
+        "card": app.card,
+        "card_accent": app.card_accent,
+        "verdict_label": app.verdict_label,
+        "sash_hint": app.sash_hint,
+        "log_wrap": app.log_wrap,
+        "log": app.log,
+        "progress": app.progress,
+    }
+    colours: dict[str, str] = {}
+    for name, widget in widgets.items():
+        for option in ("background", "foreground"):
+            try:
+                value = widget.cget(option)
+            except Exception:  # noqa: BLE001 - 不是每个控件两个选项都有
+                continue
+            if value:
+                colours[f"{name}.{option}"] = str(value).lower()
+    return colours
+
+
+def test_switching_theme_keeps_what_the_user_typed_and_what_was_measured() -> None:
+    """换主题是重建整棵控件树，所以它必须自己把用户的东西搬过去。
+
+    搬丢任何一样，用户看到的就是「点了一下深色，填的地址没了」——而这个功能本来
+    只是想让晚上看着舒服点。
+    """
+    with _isolated_window("light") as (top, app, _tmp):
+        out_dir = str(Path(tempfile.gettempdir()) / "relaycheck-out")
+        app.url_var.set("https://relay.example.test/v1")
+        app.key_var.set("sk-not-a-real-key-0123456789")
+        app.models_var.set("deepseek-v4-flash, qwen-max")
+        app.outdir_var.set(out_dir)
+        app._log("第一行")
+        app._log("第二行")
+        app._set_progress(3, 8)
+        app._show_card(
+            "未检测到问题",
+            "本次没有发现达到阈值的证据。",
+            {"critical": 0, "info": 2},
+            family_rows=[("deepseek-v4-flash", "deepseek", "一致")],
+            actions=True,
+        )
+
+        app._apply_theme("dark")
+        top.update()
+
+        assert G.PALETTE is G.DARK
+        assert app.url_var.get() == "https://relay.example.test/v1"
+        assert app.key_var.get() == "sk-not-a-real-key-0123456789"
+        assert app.models_var.get() == "deepseek-v4-flash, qwen-max"
+        assert app.outdir_var.get() == out_dir
+        assert "第一行" in app.log.get("1.0", "end-1c")
+        assert "第二行" in app.log.get("1.0", "end-1c")
+        assert app.progress.cget("maximum") == 8.0
+        assert app.progress.cget("value") == 3.0
+        assert app.verdict_label.cget("text") == "未检测到问题"
+        assert app.card.winfo_ismapped(), "切主题之后结论卡片没了"
+
+
+def test_switching_back_and_forth_reproduces_the_same_colours() -> None:
+    """浅色 -> 深色 -> 浅色 必须落到同一套颜色上。
+
+    这正是主题开关选择「重建控件树」而不是「遍历控件刷一遍色」的理由：刷色要知道
+    每一个派生颜色（``_shade``、``_tint`` 都算），漏一个的表现恰好是「大部分变了，
+    这一块没变」。重建漏不了，这条测试就是那句断言的机器版本。
+    """
+    with _isolated_window("light") as (top, app, _tmp):
+        top.geometry("980x800")
+
+        def sample() -> dict[str, str]:
+            # 画布渐变按绝对 y 取色，所以要先把窗口摆到最终几何再采样，否则两次
+            # 采到的位置不同，比出来的是布局抖动而不是配色。
+            top.update()
+            app._paint_ramp()
+            top.update_idletasks()
+            return _chrome_colours(app)
+
+        before = sample()
+        app._apply_theme("dark")
+        middle = sample()
+        app._apply_theme("light")
+        after = sample()
+
+    assert G.PALETTE is G.LIGHT
+    assert middle != before, "切到深色之后一个颜色都没变，主题开关是摆设"
+    drift = {k: (before[k], after[k]) for k in before if before.get(k) != after.get(k)}
+    assert not drift, f"绕一圈没回到同一套颜色: {drift}"
+
+
+def test_the_theme_toggle_shows_the_theme_you_will_get() -> None:
+    """按钮上写的必须是「按下去会变成什么」，不是「现在是什么」。
+
+    一个写着「深色」的按钮在深色窗口里，两件事都说得通，用户只能点一下试试。
+    """
+    with _isolated_window("light") as (_top, app, _tmp):
+        assert app.theme_btn.cget("text") == "深色"
+        app._toggle_theme()
+        assert G.PALETTE is G.DARK
+        assert app.theme_btn.cget("text") == "浅色"
+        app._toggle_theme()
+        assert G.PALETTE is G.LIGHT
+        assert app.theme_btn.cget("text") == "深色"
+
+
+def test_the_icon_is_drawn_pixel_by_pixel_and_not_borrowed_from_a_font() -> None:
+    """☀ 和 ☾ 不在 Microsoft YaHei UI 里。
+
+    Tk 找不到字形就回退到别的字体，回退字体的行高不一样，而标题那一行是手工对齐
+    的——一个字符能让整行错位。所以太阳和月亮只能自己画，16×16，纯 stdlib。
+    """
+    if not _need_gui():
+        return
+    ink, page = "#c9297a", "#ffffff"
+    sun = G.theme_icon("sun", ink, page)
+    moon = G.theme_icon("moon", ink, page)
+    for image in (sun, moon):
+        assert isinstance(image, G.tk.PhotoImage)
+        assert (image.width(), image.height()) == (16, 16), "图标必须正好 16×16"
+
+    lit = (0xC9, 0x29, 0x7A)
+    blank = (0xFF, 0xFF, 0xFF)
+    assert sun.get(8, 8) == lit, "太阳中心是空的"
+    assert moon.get(8, 8) == blank, "月亮中心是实的——那不是月亮，是圆点"
+    # 「能活过 16px 的才叫 icon」：没有光芒的圆盘在 16px 下就是一颗状态指示灯。
+    assert sun.get(8, 0) != blank, "太阳没有光芒，16px 下看不出是太阳"
+    assert moon.get(3, 3) != blank, "月亮被咬空了"
+
+
+def test_every_canvas_ramp_keeps_text_readable() -> None:
+    """画布渐变是背景，不是装饰：它不许吃掉任何一段文字的对比度。
+
+    Tk 没有 CSS 的 ``linear-gradient``，所以渐变是「按 y 采样出来的若干个纯色
+    帧」。文字压在帧上的对比度必须按最坏的那一帧算，也就是渐变的两端。
+    """
+    if not _need_gui():
+        return
+    for name, theme in G.THEMES.items():
+        stops = (theme["canvas_ramp_top"], theme["app_bg"], theme["canvas_ramp_bottom"])
+        for stop in stops:
+            body = _contrast(theme["text"], stop)
+            assert body >= 7.0, f"{name}: 正文压在 {stop} 上只有 {body:.2f}:1"
+            muted = _contrast(theme["text_muted"], stop)
+            assert muted >= 4.5, f"{name}: 次要文字压在 {stop} 上只有 {muted:.2f}:1"
+        # 渐变是「画布泛一层色」，不是条纹。端点和画布本色离得太远就成色带了。
+        assert theme["canvas_ramp_top"] != theme["canvas_ramp_bottom"]
+        for stop in (theme["canvas_ramp_top"], theme["canvas_ramp_bottom"]):
+            band = _contrast(stop, theme["app_bg"])
+            assert band < 1.30, f"{name}: {stop} 和画布本色差到 {band:.3f}:1，成色带了"
+
+
+def test_the_canvas_is_painted_as_a_ramp_and_not_as_a_block_per_container() -> None:
+    """一块平色不算渐变。
+
+    第一版就是那样：给每个画布容器取它自己中心的 y，于是每个 pane 是一整块平色，
+    两块的交界处成了一条硬边 —— 看着像渲染坏了，不像渐变。这条测试绕开截图，直接读
+    Canvas 上真正画出来的横线，要求颜色随 y 一路变过去。
+    """
+    with _isolated_window("light") as (top, app, _tmp):
+        top.geometry("980x800")
+        top.update()
+        app._paint_ramp()
+        top.update_idletasks()
+
+        origin = top.winfo_rooty()
+        stamps: list[tuple[float, str]] = []
+        for canvas in app._ramp_canvases:
+            offset = canvas.winfo_rooty() - origin
+            bands = sorted(
+                (float(canvas.coords(item)[1]), float(canvas.coords(item)[3]), item)
+                for item in canvas.find_withtag("ramp")
+            )
+            # 块与块之间不许留缝：留了缝就露出画布本色，出来的是条纹纸不是渐变。
+            for (_y0, y1, _one), (ny0, _ny1, _two) in zip(bands, bands[1:]):
+                assert y1 >= ny0, f"画布在 y={y1} 和 {ny0} 之间空了 {ny0 - y1}px"
+            for y0, _y1, item in bands:
+                stamps.append(
+                    (offset + y0, str(canvas.itemcget(item, "fill")).lower())
+                )
+        stamps.sort()
+        assert len(stamps) > 50, f"整块画布只画了 {len(stamps)} 段，不成斜坡"
+
+        steps: list[tuple[float, str]] = []
+        for stamp in stamps:
+            if not steps or steps[-1][1] != stamp[1]:
+                steps.append(stamp)
+        assert len(steps) >= 16, (
+            f"整块画布只有 {len(steps)} 档颜色，这是几块平色而不是渐变: "
+            f"{[colour for _y, colour in steps]}"
+        )
+        assert steps[0][1] == G.PALETTE["canvas_ramp_top"].lower(), steps[0]
+
+        # 两套主题都是上浅下深：浅色是「浅灰泛粉」，深色是「黑泛暗红」。
+        lumas = [_luma(colour) for _y, colour in steps]
+        drops = [round(lumas[i - 1] - lumas[i], 6) for i in range(1, len(lumas))]
+        assert min(drops) >= 0, f"渐变中途变亮了：{drops} 里的 {min(drops)}"
+        assert sum(drops) > 0.05, f"整条坡只降了 {sum(drops):.5f}，肉眼看不出来"
+
+
+def test_the_theme_is_remembered_in_a_file_that_holds_nothing_else() -> None:
+    """窗口上印着「Key 不落盘」。记住主题的这一行字不能把这句话捅破。
+
+    所以那个文件只准有一个键，而且这里顺手钉死它不会顺手把地址和 Key 也写进去。
+    """
+    with _isolated_window("light") as (_top, app, tmp):
+        app.url_var.set("https://relay.example.test/v1")
+        app.key_var.set("sk-must-never-be-written-to-disk")
+        app._toggle_theme()
+
+        path = tmp / "ui.json"
+        assert path.is_file(), "切了主题却没记住"
+        raw = path.read_text(encoding="utf-8")
+        assert json.loads(raw) == {"theme": "dark"}, raw
+        assert "sk-" not in raw, "主题文件里出现了 Key"
+        assert "relay.example" not in raw, "主题文件里出现了目标地址"
+        assert [p.name for p in tmp.iterdir()] == ["ui.json"], "多写了别的文件"
+        assert G.load_theme() == "dark"
+
 
 
 # --------------------------------------------------------------------- runner

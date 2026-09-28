@@ -84,6 +84,9 @@ _CHROME_ROLES = (
     #: 色，也不能跟着强调色走 —— 强调色在本项目里是红，而一条红进度条会被读成
     #: 「出错了」。两个主题都给它一个中性到发亮的值。
     "progress_fill",
+    #: 画布渐变的上下两端。Tk 没有 CSS 的 linear-gradient，所以画布是按窗口
+    #: y 逐块刷上去的；app_bg 是中段，也是渐变没画上时的单色兜底。
+    "canvas_ramp_top", "canvas_ramp_bottom",
     "shade_fallback", "spend_warn", "log_bg", "log_border", "log_head_bg",
     "log_head_fg", "log_hint_fg", "log_text_bg", "log_text_fg", "log_caret",
     "log_select_bg", "log_select_fg", "sash_hint", "severity_empty_fg",
@@ -127,9 +130,11 @@ _ADV_OPEN = "⌄  高级选项（通常无需调整）"
 
 LIGHT: dict[str, Any] = {
     # 画布与分层。画布是浅灰泛一点粉，跟深色那边「黑泛着暗红」是同一个做法 ——
-    # 两个主题的差别不是「亮和暗」，是灰粉配红黑。渐变 #fdfafa -> #f7f2f4 ->
-    # #f0e9ec 由第四刀按 y 采样画上去；app_bg 是它的中段，也是渐变失效时的兜底。
+    # 两个主题的差别不是「亮和暗」，是灰粉配红黑。渐变 #fdf3f7 -> #f7f2f4 ->
+    # #f1e7eb 按窗口 y 采样画上去；app_bg 是它的中段，也是渐变失效时的兜底。
     "app_bg": "#f7f2f4",
+    "canvas_ramp_top": "#fdf3f7",
+    "canvas_ramp_bottom": "#f1e7eb",
     "surface": "#ffffff",
     "surface_subtle": "#fbf7f8",
     "border": "#e0d0d5",
@@ -228,6 +233,8 @@ DARK: dict[str, Any] = {
     # #0d0809），这里的 app_bg 是它的中段，也是渐变失效时的单色兜底 —— 所以
     # 即使渐变没画上，暗色主题也还是完整的。
     "app_bg": "#190f12",
+    "canvas_ramp_top": "#2a1418",
+    "canvas_ramp_bottom": "#0d0809",
     "surface": "#1e1619",
     "surface_subtle": "#261c1f",
     "border": "#463538",
@@ -331,6 +338,54 @@ for _name, _theme in THEMES.items():
     if _missing_roles(_theme):
         raise RuntimeError(f"主题 {_name!r} 缺少角色: {_missing_roles(_theme)}")
 del _name, _theme
+
+#: 主题选择存这个文件。里面**只有主题名** —— 地址、Key、报告路径、任何一次检测的
+#: 结果都不会进来。「Key 不落盘」是窗口上印着的承诺，不能因为记住了主题就破。
+#: ``RELAYCHECK_GUI_CONFIG`` 是给测试用的覆盖点，免得测试去动使用者的家目录。
+_THEME_ENV = "RELAYCHECK_GUI_CONFIG"
+_DEFAULT_THEME = "light"
+
+
+def _config_path() -> Path:
+    override = os.environ.get(_THEME_ENV)
+    if override:
+        return Path(override)
+    return Path.home() / ".relaycheck" / "ui.json"
+
+
+def load_theme() -> str:
+    """上次选的主题；读不出来就回到浅色 —— 一个坏掉的配置文件不该拦住窗口。"""
+    try:
+        data = json.loads(_config_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return _DEFAULT_THEME
+    name = data.get("theme") if isinstance(data, dict) else None
+    return name if name in THEMES else _DEFAULT_THEME
+
+
+def save_theme(name: str) -> None:
+    if name not in THEMES:
+        raise ValueError(f"不认识的主题: {name!r}")
+    path = _config_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"theme": name}) + "\n", encoding="utf-8")
+    except OSError:
+        # 记不住偏好是小事，为这个弹窗拦住切主题是大事。
+        pass
+
+
+def use_theme(name: str) -> dict[str, Any]:
+    """把 ``PALETTE`` 指向某个主题并返回它。
+
+    tkinter 在构造控件时就把颜色固定了，所以这一步只对**之后**新建的控件有效。
+    换主题必须跟着重建控件树，否则得到的是半新半旧的窗口。
+    """
+    global PALETTE
+    if name not in THEMES:
+        raise ValueError(f"不认识的主题: {name!r}")
+    PALETTE = THEMES[name]
+    return PALETTE
 
 
 def verdict_style(verdict: str) -> tuple[str, str, str]:
@@ -714,10 +769,88 @@ def _icon_path(suffix: str) -> Path | None:
     return None
 
 
+# --------------------------------------------------------------- theme glyphs
+
+#: 太阳和月亮是逐像素画出来的，不是字体里的 ☀ / ☾。这不是审美问题：这两个码位
+#: 不在 Microsoft YaHei UI 的覆盖里，Tk 会换一个回退字体，而回退字体的行高跟标题
+#: 行的手工对齐对不上，整行会跳。画出来的图只有像素，跟装了什么字体无关。
+#:
+_ICON_SIZE = 16
+_ICON_SAMPLES = 4  # 4x4 超采样 => 边缘 17 级过渡，不会锯齿
+
+#: 太阳：一个圆盘加四道光芒。第一版是个不带光芒的纯圆盘，理由是「16px 下光芒会糊
+#: 成一个毛球」—— 试出来的结论正好相反：**没有光芒的太阳在 16px 下就是一个实心圆
+#: 点**，摆在徽章那一排里会被读成状态指示灯，而不是「按一下变浅色」。
+#:
+#: 光芒也不能贪多。八道（含四条对角线）时，对角的那四道只剩两个孤立的点飘在角上，
+#: 看着像脏东西；四道正方向的就干净了，长度也够。圆盘和光芒之间必须留出缝：贴上的
+#: 话整张图会读成一个加号。
+_SUN_DISC = 3.6
+_SUN_RAY_INNER = 5.2
+_SUN_RAY_OUTER = 7.4
+_SUN_RAY_HALF = 0.6
+_SUN_RAY_DIRS = ((1.0, 0.0), (0.0, 1.0), (-1.0, 0.0), (0.0, -1.0))
+
+
+def _icon_coverage(kind: str, x: int, y: int) -> float:
+    """一个像素被图形盖住的比例，0.0 - 1.0。"""
+    centre = _ICON_SIZE / 2.0
+    radius = _ICON_SIZE / 2.0 - 1.5
+    if kind == "moon":
+        bite_x = centre + radius * 0.62
+        bite_y = centre - radius * 0.52
+        bite_r = radius * 0.90
+    hits = 0
+    steps = _ICON_SAMPLES
+    for i in range(steps):
+        for j in range(steps):
+            px = x + (i + 0.5) / steps
+            py = y + (j + 0.5) / steps
+            dx = px - centre
+            dy = py - centre
+            if kind == "moon":
+                inside = dx * dx + dy * dy <= radius * radius
+                if inside:
+                    inside = (px - bite_x) ** 2 + (py - bite_y) ** 2 > bite_r ** 2
+            else:
+                inside = dx * dx + dy * dy <= _SUN_DISC * _SUN_DISC
+                if not inside:
+                    for ux, uy in _SUN_RAY_DIRS:
+                        along = dx * ux + dy * uy
+                        if _SUN_RAY_INNER <= along <= _SUN_RAY_OUTER:
+                            if abs(dy * ux - dx * uy) <= _SUN_RAY_HALF:
+                                inside = True
+                                break
+            if inside:
+                hits += 1
+    return hits / (steps * steps)
+
+
+def theme_icon(kind: str, foreground: str, background: str) -> tk.PhotoImage:
+    """画一个 16x16 的 ``sun`` / ``moon``，边缘按覆盖度跟底色混出抗锯齿。"""
+    if kind not in ("sun", "moon"):
+        raise ValueError(f"不认识的图标: {kind!r}")
+    image = tk.PhotoImage(width=_ICON_SIZE, height=_ICON_SIZE)
+    rows: list[str] = []
+    for y in range(_ICON_SIZE):
+        row: list[str] = []
+        for x in range(_ICON_SIZE):
+            cover = _icon_coverage(kind, x, y)
+            if cover >= 1.0:
+                row.append(foreground)
+            elif cover <= 0.0:
+                row.append(background)
+            else:
+                row.append(_mix_color(background, foreground, cover))
+        rows.append("{" + " ".join(row) + "}")
+    image.put(" ".join(rows), to=(0, 0))
+    return image
+
+
 # ------------------------------------------------------------------------- the UI
 
 class RelayCheckApp:
-    def __init__(self, root: tk.Tk) -> None:
+    def __init__(self, root: tk.Tk, theme: str | None = None) -> None:
         self.root = root
         self.proc: AuditProcess | None = None
         self.last_out_dir: Path | None = None
@@ -726,13 +859,66 @@ class RelayCheckApp:
         self._probes_total = 0
         self._icon_image: tk.PhotoImage | None = None
         self._icon_error = ""
+        #: 换主题要重建整棵控件树，这几样是重建时唯一的记忆：卡片最后画成什么
+        #: 样、分隔线原来在哪、哪些控件要跟着画布渐变走。
+        self._card_args: tuple[Any, ...] | None = None
+        self._ramp_canvases: list[tk.Canvas] = []
+        self._ramp_key: tuple[Any, ...] = ()
+        self._sash_restore: int | None = None
+        self._theme_icon: dict[str, tk.PhotoImage] = {}
+        #: 进度条最后画到的位置。``_probes_done`` 是「这一轮测了几项」，不是「条画
+        #: 到哪了」，重建之后要照原样摆回来的是后者。
+        self._progress_seen: tuple[int, int] = (0, 0)
+
+        if theme is not None and theme not in THEMES:
+            raise ValueError(f"不认识的主题: {theme!r}")
+        # 构造函数里收主题是为了让截图工具和预览脚本能把主题钉死。不钉死的话，
+        # 它们会跟着上一位使用者存在配置文件里的选择跑，回归对比就没意义了。
+        self._theme = theme or load_theme()
+        use_theme(self._theme)
 
         root.title(f"{APP_TITLE} {__version__}")
         root.geometry("980x800")
         root.minsize(840, 660)
-        root.configure(background=PALETTE["app_bg"])
         root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._apply_icon()
+
+        self._create_vars()
+        self._build_ui()
+
+        self._set_running(False)
+        self._log(
+            "填上中转站地址和 API Key，点「开始检测」就行。\n"
+            "模型那一栏可以留空 —— 留空会自动从 /v1/models 里挑几个不同厂商的来对比。\n"
+        )
+
+    def _create_vars(self) -> None:
+        """The one place every ``tk.Variable`` the window owns is created.
+
+        They live here instead of inside the builders because switching themes
+        rebuilds the widget tree, and a rebuild that re-created the variables
+        would silently wipe what the user typed mid-run.
+        """
+        self.url_var = tk.StringVar()
+        self.key_var = tk.StringVar()
+        self.models_var = tk.StringVar()
+        self.outdir_var = tk.StringVar(value=str(self._default_out_dir()))
+        self.strength_var = tk.StringVar(value="default")
+        self.maxmodels_var = tk.StringVar(value="6")
+        self.timeout_var = tk.StringVar(value="60")
+        self.budget_var = tk.StringVar(value="240")
+        self.show_key = tk.BooleanVar(value=False)
+        self.adv_open = tk.BooleanVar(value=False)
+        self.status_var = tk.StringVar(value="空闲")
+
+    def _build_ui(self) -> None:
+        """Build the window from whatever palette is current.
+
+        tkinter bakes colours in at construction time, so a theme switch is a
+        rebuild rather than a repaint. Everything that has to survive one is
+        either a ``tk.Variable`` (see ``_create_vars``) or stashed by ``_rebuild``.
+        """
+        self.root.configure(background=PALETTE["app_bg"])
         self._configure_styles()
 
         # A vertical pane split so the log can be dragged taller. The form has a
@@ -742,15 +928,15 @@ class RelayCheckApp:
         #
         # Both panes exist before anything packs into them: ``PanedWindow.add``
         # sizes a pane from its child, so the child has to be in the tree first.
-        self.paned = ttk.PanedWindow(root, orient="vertical", style="Relay.TPanedwindow")
+        self.paned = ttk.PanedWindow(self.root, orient="vertical", style="Relay.TPanedwindow")
         self.paned.pack(fill="both", expand=True)
-        self.top = tk.Frame(self.paned, background=PALETTE["app_bg"], bd=0)
+        self.top, self.top_canvas = self._canvas_pane(self.paned)
         self.paned.add(self.top, weight=1)
 
         # On a maximised monitor a form stretched over 1900px becomes harder to
         # scan, not more spacious.  Keep the working column readable and centre it;
         # the minimum window still gets a safe 20px gutter.
-        self.content = tk.Frame(self.top, background=PALETTE["app_bg"], bd=0)
+        self.content, self.content_canvas = self._canvas_pane(self.top)
         self.content.pack(fill="x", padx=20)
         self._content_pad = 20
         self.top.bind("<Configure>", self._on_top_resize)
@@ -761,11 +947,10 @@ class RelayCheckApp:
         self._build_verdict()
         self._build_log()
 
-        self._set_running(False)
-        self._log(
-            "填上中转站地址和 API Key，点「开始检测」就行。\n"
-            "模型那一栏可以留空 —— 留空会自动从 /v1/models 里挑几个不同厂商的来对比。\n"
-        )
+        # 只登记这一轮刚建出来、还是 app_bg 的控件；刷过渐变之后再登记就找不到
+        # 它们了。
+        self._register_ramp()
+
         # The divider can only be placed once the paned window has been laid out.
         # Called from here it is a silent no-op: ``sashpos`` accepts the number,
         # discards it because the widget is 1px tall, and the window then opens with
@@ -803,12 +988,209 @@ class RelayCheckApp:
             background=[("active", PALETTE["surface_subtle"])],
         )
 
+    # ------------------------------------------------------------- the theme
+
+    def _theme_action_label(self) -> str:
+        """说出「点下去会变成什么」，不是「现在是什么」。
+
+        按钮上写「深色」而窗口正亮着，读起来才是「按一下变深色」。写现在这套主题
+        的话，得先看一眼整个窗口才能反推这个按钮是干什么的。
+        """
+        return "深色" if self._theme == "light" else "浅色"
+
+    def _theme_action_icon(self) -> tk.PhotoImage:
+        """画的是**目标**主题的图标：现在浅色，就画月亮。"""
+        kind = "moon" if self._theme == "light" else "sun"
+        key = f"{kind}:{PALETTE['accent']}"
+        cached = self._theme_icon.get(key)
+        if cached is None:
+            # 必须留一个 Python 引用：Tk 的 image 在 Python 对象被回收时会一起
+            # 消失，按钮上就什么都不剩了。
+            cached = theme_icon(kind, PALETTE["accent"], PALETTE["surface"])
+            self._theme_icon[key] = cached
+        return cached
+
+    def _toggle_theme(self) -> None:
+        self._apply_theme("dark" if self._theme == "light" else "light")
+
+    def _apply_theme(self, name: str, persist: bool = True) -> None:
+        """换主题：切调色板、记下来、重建窗口。"""
+        if name not in THEMES:
+            raise ValueError(f"不认识的主题: {name!r}")
+        self._theme = name
+        use_theme(name)
+        if persist:
+            save_theme(name)
+        self._rebuild()
+
+    def _rebuild(self) -> None:
+        """拆掉控件树、按新调色板重建一次。
+
+        tkinter 构造控件时就把颜色烤进去了，所以换主题只有这一条老实的路。反过来
+        「遍历控件树重新上色」得把每一个派生颜色（``_shade``、``_tint``）都算对，
+        漏一个的表现恰好是「大部分变了、这一块没变」—— 最难发现的那种。重建不会漏：
+        浅色 -> 深色 -> 浅色必须回到同一批像素，测试盯着这件事。
+
+        重建之后要还回去的只有用户输入、已测出来的结果、和分隔线的位置。
+        """
+        log_text = self.log.get("1.0", "end-1c")
+        log_fraction = self.log.yview()[0]
+        picked = self.model_list.curselection()
+        running = self.proc is not None and self.proc.running
+        try:
+            sash = self.paned.sashpos(0)
+        except tk.TclError:
+            sash = 0
+
+        self._sash_restore = sash if sash > 1 else None
+        self._theme_icon.clear()
+        self.paned.destroy()
+        self._ramp_canvases = []
+        self._ramp_key = ()
+        self._build_ui()
+
+        self._set_running(running)
+        self._set_progress(*self._progress_seen)
+
+        self.log.configure(state="normal")
+        self.log.delete("1.0", "end")
+        self.log.insert("end", log_text)
+        self.log.see("end")
+        self.log.yview_moveto(log_fraction)
+        self.log.configure(state="disabled")
+
+        if self._model_names:
+            self._fill_model_list(self._model_names)
+            for index in picked:
+                if index < len(self._model_names):
+                    self.model_list.selection_set(index)
+        if self._card_args is not None:
+            self._show_card(*self._card_args)
+
+    # ---------------------------------------------------- the canvas gradient
+
+    def _canvas_pane(self, parent: tk.Misc) -> tuple[tk.Frame, tk.Canvas]:
+        """一块画布：底下铺一张满尺寸的 Canvas，上面照常 pack 内容。
+
+        Tk 的 ``Frame`` 一定不透明，所以「加一个背景层、让内容浮在上面」解决不了问
+        题 —— 每一层不透明容器都会把渐变盖住。做法是让**每一个真正会露出画布的容
+        器**自己带一张 Canvas：``self.top``、``self.content``、日志那块的 ``outer``。
+        三张各画自己那一竖条，取色一律用绝对 y，所以拼起来是同一条曲线，接缝对得上。
+
+        Canvas 先建、内容后建，栈序自然是内容在上；最后再 ``lower()`` 一次，不倚仗
+        ``pack`` 会不会顺手抬升。装 Canvas 用 ``place`` 是为了不参与几何传播：pane
+        的请求尺寸仍然由 ``content`` 决定，分界线的算法一个字都不用改。
+        """
+        holder = tk.Frame(parent, background=PALETTE["app_bg"], bd=0)
+        canvas = tk.Canvas(
+            holder, background=PALETTE["app_bg"], bd=0,
+            highlightthickness=0, takefocus=0,
+        )
+        canvas.place(x=0, y=0, relwidth=1, relheight=1)
+        return holder, canvas
+
+    # ---------------------------------------------------- the canvas gradient
+
+    def _register_ramp(self) -> None:
+        """记下这一轮要画渐变的那三张画布，并把它们压到最底。"""
+        self._ramp_canvases = [self.top_canvas, self.content_canvas, self.log_canvas]
+        self._ramp_key = ()
+        for canvas in self._ramp_canvases:
+            try:
+                canvas.lower()
+            except tk.TclError:
+                pass
+
+    def _ramp_colour(self, fraction: float) -> str:
+        """渐变上任意一点的颜色：中段是 ``app_bg``，两端各接一个端点色。"""
+        base = PALETTE["app_bg"]
+        if fraction <= 0.5:
+            return _mix_color(PALETTE["canvas_ramp_top"], base, fraction * 2)
+        return _mix_color(base, PALETTE["canvas_ramp_bottom"], (fraction - 0.5) * 2)
+
+    #: 渐变的带宽，像素。整条坡的亮度跨度只有 0.09 上下，切成 6px 一条的话相邻两条
+    #: 差 0.0007，远在可辨阈值（约 0.01）之下；再宽就看得见台阶，再窄只是白画几百
+    #: 个 item。
+    _RAMP_STRIP = 6
+
+    def _paint_ramp(self) -> None:
+        """把画布按窗口 y 刷成一条极缓的渐变。
+
+        Tk 没有 CSS 的 ``linear-gradient``，能画的只有横线，所以渐变是「每 6px 一条
+        横线」堆出来的。只给每个容器算一个颜色不算渐变 —— 那只是把窗口切成几块平色，
+        交界处是一条硬边。
+
+        取色用**绝对** y，不是 pane 内的 y：三张画布得落在同一条曲线上，各算各的就对
+        不上。``height <= 1`` 直接返回：还没布局时刷一遍等于把画布染成端点色，窗口上
+        看到的就不再是调色板里的 ``app_bg`` 了。
+        """
+        if not self._ramp_canvases:
+            return
+        height = self.root.winfo_height()
+        if height <= 1:
+            return
+        origin = self.root.winfo_rooty()
+        # 画布的位置也会变（拖分界线就是），所以缓存键要把每张的位置和宽度算进去，
+        # 只看窗口高度会在拖动时留下一段过期的渐变。
+        boxes: list[Any] = []
+        for canvas in self._ramp_canvases:
+            try:
+                boxes.append(
+                    (
+                        canvas.winfo_rooty() - origin,
+                        canvas.winfo_width(),
+                        canvas.winfo_height(),
+                    )
+                )
+            except tk.TclError:
+                boxes.append(None)
+        key: tuple[Any, ...] = (height, tuple(boxes))
+        if key == self._ramp_key:
+            return
+        self._ramp_key = key
+
+        step = self._RAMP_STRIP
+        for canvas, box in zip(self._ramp_canvases, boxes):
+            if box is None:
+                continue
+            top, width, canvas_height = box
+            try:
+                canvas.delete("ramp")
+                if width <= 1:
+                    continue
+                # 每段画成**实心方块**，不是一根 1px 横线：线之间会露出画布本色，
+                # 出来的不是渐变而是一张条纹纸。方块首尾相接，才真的一路铺满。
+                rows = canvas_height // step + 2
+                for index in range(rows):
+                    y = index * step
+                    colour = self._ramp_colour(
+                        min(1.0, max(0.0, (top + y) / height))
+                    )
+                    canvas.create_rectangle(
+                        0, y, width, y + step,
+                        fill=colour, outline="", tags="ramp",
+                    )
+            except tk.TclError:
+                continue
+
+        # 分隔线那一带是 paned 自己的底，不属于任何子控件；不单独刷就会在两段斜坡
+        # 中间留一条平色的缝。
+        try:
+            mid = self.paned.winfo_rooty() - origin + 2
+            ttk.Style(self.root).configure(
+                "Relay.TPanedwindow",
+                background=self._ramp_colour(min(1.0, max(0.0, mid / height))),
+            )
+        except tk.TclError:
+            pass
+
     def _on_top_resize(self, event: tk.Event) -> None:
         """Centre the readable column without making height screen-dependent."""
         pad = max(20, (int(event.width) - 1180) // 2)
         if pad != self._content_pad:
             self._content_pad = pad
             self.content.pack_configure(padx=pad)
+        self._paint_ramp()
 
     def _button(
         self,
@@ -817,6 +1199,7 @@ class RelayCheckApp:
         command: Callable[[], None],
         kind: str = "secondary",
         compact: bool = False,
+        image: tk.PhotoImage | None = None,
     ) -> tk.Button:
         """Create one flat, keyboard-focusable button with a real visual role."""
         palettes = {
@@ -833,6 +1216,8 @@ class RelayCheckApp:
         button = tk.Button(
             parent,
             text=text,
+            image=image,
+            compound="left",
             command=command,
             font=(_FONT, 9, "bold" if kind == "primary" else "normal"),
             background=bg,
@@ -997,9 +1382,16 @@ class RelayCheckApp:
         for text in ("只读审计", "Key 不落盘"):
             tk.Label(
                 trust, text=text, background=PALETTE["surface"], foreground=PALETTE["text_muted"],
-                font=(_FONT, 8, "bold"), padx=10, pady=5,
+                font=(_FONT, 8, "bold"), padx=10, pady=6,
                 highlightthickness=1, highlightbackground=PALETTE["border_soft"],
             ).pack(side="left", padx=(8, 0))
+        # 排在那两个承诺徽章后面，不排在前面：这一排上先落进眼睛的应该是承诺，
+        # 不是一个会改变东西的按钮。
+        self.theme_btn = self._button(
+            trust, self._theme_action_label(), self._toggle_theme,
+            kind="card", compact=True, image=self._theme_action_icon(),
+        )
+        self.theme_btn.pack(side="left", padx=(8, 0))
 
     def _build_form(self) -> None:
         box = tk.Frame(
@@ -1025,15 +1417,6 @@ class RelayCheckApp:
         body.columnconfigure(1, weight=1, uniform="field")
         box.columnconfigure(0, weight=1)
 
-        self.url_var = tk.StringVar()
-        self.key_var = tk.StringVar()
-        self.models_var = tk.StringVar()
-        self.outdir_var = tk.StringVar(value=str(self._default_out_dir()))
-        self.strength_var = tk.StringVar(value="default")
-        self.maxmodels_var = tk.StringVar(value="6")
-        self.timeout_var = tk.StringVar(value="60")
-        self.budget_var = tk.StringVar(value="240")
-
         top_fields = tk.Frame(body, background=PALETTE["surface"], bd=0)
         top_fields.grid(row=0, column=0, columnspan=2, sticky="ew")
         top_fields.columnconfigure(0, weight=1, uniform="top-field")
@@ -1050,9 +1433,10 @@ class RelayCheckApp:
         key_row = tk.Frame(key_block, background=PALETTE["surface"], bd=0)
         key_row.pack(fill="x", pady=(6, 0))
         key_row.columnconfigure(0, weight=1)
-        self.key_entry = self._entry(key_row, self.key_var, show="●")
+        self.key_entry = self._entry(
+            key_row, self.key_var, show="" if self.show_key.get() else "●"
+        )
         self.key_entry.grid(row=0, column=0, sticky="ew", ipady=7)
-        self.show_key = tk.BooleanVar(value=False)
         tk.Checkbutton(
             key_row, text="显示", variable=self.show_key, command=self._toggle_key,
             background=PALETTE["surface"], activebackground=PALETTE["surface"], foreground=PALETTE["text_muted"],
@@ -1113,9 +1497,9 @@ class RelayCheckApp:
         # nearly every run, and showing them costs a third of the form's height —
         # height that the result card needs as soon as a run comes back with
         # family lines in it.
-        self.adv_open = tk.BooleanVar(value=False)
         self.adv_toggle = self._button(
-            body, _ADV_CLOSED, self._toggle_advanced, kind="card", compact=True
+            body, _ADV_OPEN if self.adv_open.get() else _ADV_CLOSED,
+            self._toggle_advanced, kind="card", compact=True,
         )
         self.adv_toggle.grid(
             row=4, column=0, columnspan=2, sticky="w", pady=(12, 0)
@@ -1175,7 +1559,8 @@ class RelayCheckApp:
         ).pack(side="left")
         self._entry(nums, self.budget_var, width=6).pack(side="left", padx=(6, 0), ipady=3)
 
-        self.adv_panel.grid_remove()
+        if not self.adv_open.get():
+            self.adv_panel.grid_remove()
 
     def _build_controls(self) -> None:
         bar = tk.Frame(self.content, background=PALETTE["app_bg"], bd=0)
@@ -1188,7 +1573,6 @@ class RelayCheckApp:
         self.open_btn = self._button(bar, "打开报告", self._open_out_dir, kind="secondary")
         self.open_btn.pack(side="left", padx=(8, 0))
 
-        self.status_var = tk.StringVar(value="空闲")
         state = tk.Frame(
             bar, background=PALETTE["surface"], bd=0, padx=10, pady=8,
             highlightthickness=1, highlightbackground=PALETTE["border_soft"],
@@ -1367,7 +1751,7 @@ class RelayCheckApp:
         # from ``pack`` live in a plain frame that is itself the pane. No top margin
         # on that frame: the hairline below has to land on the divider, and the log
         # frame brings its own gap.
-        outer = tk.Frame(self.paned, background=PALETTE["app_bg"], bd=0)
+        outer, self.log_canvas = self._canvas_pane(self.paned)
         self.paned.add(outer, weight=3)
         # Under this theme the sash is painted in the same colour as everything
         # around it, so an untouched divider is invisible and nobody finds out the
@@ -1409,12 +1793,23 @@ class RelayCheckApp:
             self._log_pad = pad
             self.sash_hint.pack_configure(padx=pad)
             self.log_wrap.pack_configure(padx=pad)
+        self._paint_ramp()
 
     def _on_paned_configure(self, event: tk.Event) -> None:
         """Place the divider the first time the paned window has a real size."""
         if self._sash_placed or event.height <= 1:
             return
         self._sash_placed = True
+        if self._sash_restore is not None:
+            # 换主题重建之后走这条：使用者拖过的位置是他自己定的，默认值不该
+            # 把它顶掉。
+            try:
+                self.paned.sashpos(0, self._sash_restore)
+            except tk.TclError:
+                self._reset_sash()
+            self._sash_restore = None
+            self._fit_sash()
+            return
         self._reset_sash()
 
     def _reset_sash(self) -> None:
@@ -1511,6 +1906,10 @@ class RelayCheckApp:
             self._set_button_enabled(button, can_open)
 
     def _set_progress(self, done: int, total: int) -> None:
+        # 记住最后一次画到哪：``_probes_done`` / ``_probes_total`` 是「这一轮跑了
+        # 多少项」，只有 ``_note_progress`` 会动它们；重建之后要原样摆回进度条，得
+        # 用这个真正画过的值。
+        self._progress_seen = (done, total)
         if total > 0:
             self.progress.configure(maximum=total, value=min(done, total))
         else:
@@ -1683,8 +2082,15 @@ class RelayCheckApp:
         counts: dict[str, int] | None,
         family_rows: Sequence[tuple[str, str, str]] | None = None,
         actions: bool = False,
+        style: tuple[str, str, str] | None = None,
     ) -> None:
-        fg, bg, _ = verdict_style(verdict)
+        # ``style`` exists so the failure card is drawn once instead of being
+        # painted as a verdict and then re-painted from outside: a rebuild can
+        # only reproduce the colours it can replay, and the second paint was not
+        # part of this call.
+        fg, bg, _ = style or verdict_style(verdict)
+        rows = list(family_rows or ())
+        self._card_args = (verdict, detail, counts, rows, actions, style)
         self._tint(bg)
         self.card_accent.configure(background=fg)
         self.verdict_label.configure(text=verdict, foreground=fg)
@@ -1703,7 +2109,6 @@ class RelayCheckApp:
                 foreground=fill_fg if count > 0 else PALETTE["severity_empty_fg"],
             )
 
-        rows = list(family_rows or ())
         # Sections first, then content: the family Text sizes itself from its own
         # laid-out width, and a widget that is still unpacked has none.
         self._set_sections(bool(counts), bool(rows), actions)
@@ -1768,11 +2173,15 @@ class RelayCheckApp:
             self._log("这个站没有返回任何模型。")
             return
         self._model_names = names
+        self._fill_model_list(names)
+        self._log(f"拿到 {len(names)} 个模型，按住 Ctrl 可以点选多个。")
+
+    def _fill_model_list(self, names: Sequence[str]) -> None:
+        """灌模型名并让它露面。换主题重建之后要照原样摆回来。"""
         self.model_list.delete(0, "end")
         for name in names:
             self.model_list.insert("end", name)
         self.model_list_frame.grid()
-        self._log(f"拿到 {len(names)} 个模型，按住 Ctrl 可以点选多个。")
 
     def _collect_models(self) -> str:
         """Selected listbox entries win; otherwise fall back to the text field."""
@@ -1881,17 +2290,14 @@ class RelayCheckApp:
                     self._log(f"报告读不出来：{exc}")
 
         if report is None:
-            fg, bg, detail = fail_style()
+            detail = fail_style()[2]
             if code in (0, 1):
                 # Exit 0/1 mean the audit ran; no report.json means it was killed
                 # before writing. Saying "运行失败" without that nuance would hide
                 # the difference between "the relay is clean" and "we stopped it".
                 detail = ("检测被中断，报告没写出来。没有报告不代表中转站有问题，"
                           "也不代表没问题 —— 只代表这次没查完。")
-            self._show_card("运行失败", detail, None, actions=True)
-            self._tint(bg)
-            self.card_accent.configure(background=fg)
-            self.verdict_label.configure(foreground=fg)
+            self._show_card("运行失败", detail, None, actions=True, style=fail_style())
             return
 
         verdict = str(report.get("verdict") or "运行结束")
@@ -1949,6 +2355,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     for that child process. The decision is made before Tk is ever touched, so the
     child stays headless.
     """
+    def complain(message: str) -> int:
+        # A windowed bundle has no console, so ``sys.stderr`` can be None. Losing the
+        # message on the floor is better than raising on top of the real problem.
+        stream = sys.stderr
+        if stream is not None:
+            print(message, file=stream)
+        return 2
+
     args = list(sys.argv[1:] if argv is None else argv)
     if args and args[0] == "--run-audit":
         _repair_standard_streams()
@@ -1956,8 +2370,27 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         return cli_main(args[1:])
 
+    # ``--theme`` pins the palette so the screenshot tools and the preview script
+    # cannot drift with whatever the last person to run the window happened to pick.
+    # Deliberately not argparse: this entry point still has to forward ``--run-audit``
+    # verbatim, and a real parser would just be a second definition to keep in sync.
+    theme: str | None = None
+    remaining: list[str] = []
+    index = 0
+    while index < len(args):
+        if args[index] == "--theme" and index + 1 < len(args):
+            theme = args[index + 1]
+            index += 2
+            continue
+        remaining.append(args[index])
+        index += 1
+    if remaining:
+        return complain(f"无法识别的参数: {' '.join(remaining)}")
+    if theme is not None and theme not in THEMES:
+        return complain(f"--theme 只能是 {' / '.join(THEMES)}")
+
     root = tk.Tk()
-    RelayCheckApp(root)
+    RelayCheckApp(root, theme=theme)
     root.mainloop()
     return 0
 

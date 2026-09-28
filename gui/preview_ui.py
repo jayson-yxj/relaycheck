@@ -78,11 +78,10 @@ def _fill_log(app: G.RelayCheckApp) -> None:
 
 
 def show(state: str, theme: str = "light") -> None:
-    # 换主题就是换掉这一张表。控件是在构造时读颜色的，所以必须在建窗口之前设；
-    # 这也正是 app 之后切换主题要重建控件树的原因。
-    G.PALETTE = G.THEMES[theme]
+    # 主题走构造参数，不在这里手动改模块级的 PALETTE：app 自己会去读使用者的偏好
+    # 文件，先设再建窗口会被它覆盖掉，六张状态图就会跟着上一个人选的深浅跑。
     root = tk.Tk()
-    app = G.RelayCheckApp(root)
+    app = G.RelayCheckApp(root, theme=theme)
     app.url_var.set("https://api.example.com/v1")
     app.outdir_var.set(str(Path.home() / "Documents" / "relaycheck报告" / "preview"))
 
@@ -123,13 +122,10 @@ def show(state: str, theme: str = "light") -> None:
         )
         _fill_log(app)
     elif state == "failure":
-        fg, bg, detail = G.fail_style()
+        detail = G.fail_style()[2]
         app.status_var.set("提前结束（3/8 项，退出码 2）")
         app._set_progress(3, 8)
-        app._show_card("运行失败", detail, None, actions=True)
-        app._tint(bg)
-        app.card_accent.configure(background=fg)
-        app.verdict_label.configure(foreground=fg)
+        app._show_card("运行失败", detail, None, actions=True, style=G.fail_style())
         app._log("连接失败：示例错误；没有生成报告。")
     else:  # argparse constrains this; kept loud for direct callers.
         raise ValueError(state)

@@ -157,7 +157,11 @@ python gui\preview_ui.py running
 python gui\preview_ui.py clean
 python gui\preview_ui.py problem
 python gui\preview_ui.py failure
+python gui\preview_ui.py clean --theme dark
 ```
+
+`--theme` 把调色板钉死。不钉死的话预览会跟着 `~/.relaycheck/ui.json` 里上一位使用者
+存的选择跑，深色浅色的回归截图就没法比了。
 
 它不是第二套报告逻辑；结论文案、严重度徽章和家族线索仍由 `RelayCheckApp` 原来的方法绘制。
 
@@ -165,7 +169,7 @@ python gui\preview_ui.py failure
 
 分两层，都不碰真站。
 
-**`tests\test_gui.py`** —— 34 项，不需要构建产物，CI 的五条腿都会跑（没有 tkinter
+**`tests\test_gui.py`** —— 43 项，不需要构建产物，CI 的五条腿都会跑（没有 tkinter
 的机器，比如 headless Linux runner，会干净地 skip 掉）。它钉的是界面自己决定的东西：
 
 * **key 绝不进命令行。** 把 `subprocess.Popen` 换掉，真的跑一次
@@ -196,6 +200,21 @@ python gui\preview_ui.py failure
   不显示更糟，它读起来像「就这些」。
 * **图标真的挂上了。** 直接解析 ICO 头校验七档尺寸，不依赖 Pillow（CI 只装
   `requests` + `pytest`）。
+* **换主题不能丢东西。** 换主题是拆掉整棵控件树重建（tkinter 在构造时就把颜色烤进去
+  了），所以它必须自己把使用者填的地址、Key、模型、输出目录，以及已经跑出来的结论、
+  日志正文和进度值一并搬过去——搬丢一样，使用者的体验就是「点了一下深色，填的东西没
+  了」。还有一条测试走 浅色→深色→浅色 一圈，要求落回**同一批颜色**：这是「重建」相对
+  「遍历控件重新刷色」的全部理由，漏掉任何一个派生颜色的表现恰好是「大部分变了、这一
+  块没变」。
+* **画布上那条坡得真是坡。** Tk 没有 `linear-gradient`，渐变是每 6px 一段实心方块堆出
+  来的。测试直接读 Canvas 上画出来的方块，要求颜色随 y 一路变过去、块与块之间不留缝
+  （留缝就露出画布本色，出来的是一张条纹纸），并且每一段上压着的正文和次要文字都还在
+  AA 门槛之上。
+* **图标是自己画的，不是字体里的字符。** `☀` / `☾` 不在 `Microsoft YaHei UI` 里，Tk 会
+  回退到别的字体、把标题那一行的高度顶歪；所以太阳和月亮是逐像素画出来的 16×16
+  `PhotoImage`，测试断言它确实是 `PhotoImage`、确实是 16×16、而且两张不是同一张。
+* **主题文件里只有主题。** 窗口上印着「Key 不落盘」，记住深浅的那一行字不能把这句话
+  捅破：测试断言那个文件恰好只有一个键，且不含地址和 Key。
 * **构建脚本和 sdist 的两个环境坑。** `build.ps1` 必须有 UTF-8 BOM；`MANIFEST.in` 必须
   覆盖 spec 引用到的每种资产后缀。这两条在 CI 的 en-US runner 上都**不会**报错，
   所以只能这样钉死。
