@@ -1648,6 +1648,48 @@ def test_the_design_document_lists_the_colours_that_are_in_the_code() -> None:
         )
 
 
+def test_the_design_document_does_not_name_things_that_no_longer_exist() -> None:
+    """``gui/DESIGN.md`` 里点名的每个标识符，都得在 `gui/` 里真的找得到。
+
+    上一条盯的是**值**，这条盯的是**名字**。名字才是这份文档真正坑人的地方：它上一版
+    里写着 `_ACCENT_HOVER`、`_SEVERITY_EMPTY_FG`、`_FAMILY_FALLBACK`、行号 —— 全都
+    已经不存在了，而文档还在要求别人遵守它们。留一条不存在的规则，比不写更糟。
+
+    允许两个豁免表，两者都必须短、必须写清理由。``KNOWN_GONE`` 是**故意**提到的历史
+    名字（旁边就写着现在叫什么）；``NOT_OURS`` 是 Win32 / Tk / 标准库的名字，它们不在
+    这个仓库里，也不该在。
+    """
+    known_gone = {
+        "_ACCENT_HOVER", "_SEVERITY_EMPTY_FG", "_FAMILY_FALLBACK", "_FAMILY_COLORS",
+        "_SASH_HINT", "VERDICT_STYLE", "_CARD_ACCENT", "accent_hover", "on_accent",
+        "_ramp_widgets", "_ramp_last",
+    }
+    not_ours = {
+        "AA", "AAA", "CopyFromScreen", "EnumWindows", "IsWindowVisible", "PrintWindow",
+        "GetWindowTextLengthW", "GetWindowDC", "CreateCompatibleDC", "SelectObject",
+        "GetDIBits", "create_window", "ctypes", "frombytes", "frombuffer",
+    }
+
+    doc = (ROOT / "gui" / "DESIGN.md").read_text(encoding="utf-8")
+    haystack = "\n".join(
+        p.read_text(encoding="utf-8", errors="replace")
+        for p in sorted((ROOT / "gui").glob("*.py"))
+    )
+    haystack += (ROOT / "tests" / "test_gui.py").read_text(encoding="utf-8")
+
+    is_identifier = re.compile(r"^_?[A-Za-z][A-Za-z0-9_]*$")
+    spans = sorted({s for s in re.findall(r"`([^`\n]+)`", doc) if is_identifier.match(s)})
+    assert len(spans) > 80, f"只提取到 {len(spans)} 个标识符，正则或文档结构变了"
+
+    unknown = [s for s in spans if s not in known_gone and s not in not_ours
+               and s not in haystack]
+    assert not unknown, (
+        "DESIGN.md 里点到了这个仓库里不存在的东西："
+        + "、".join(unknown)
+        + " —— 要么改名，要么加进 known_gone 并写明现在叫什么"
+    )
+
+
 def test_building_the_window_never_writes_a_theme_file() -> None:
     """构造窗口只**读**偏好，写只发生在真的按了那个开关之后。
 

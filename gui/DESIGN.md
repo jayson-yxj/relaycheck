@@ -30,7 +30,7 @@ Select-String -Path gui\relaycheck_gui.py -Pattern '^_CHROME_ROLES'   # 或者�
 界面外壳本身**必须是安静的**：证据色和结论色已经在承担全部含义，外壳只配拥有一块
 中性画布和一个非语义的强调色。
 
-从 `_themecut1` 起，颜色不再是一堆散落的模块级常量，而是**两套各 44 个键的调色板**：
+颜色在角色化那一次改造之后，不再是散落的模块级常量，而是**两套各 44 个键的调色板**：
 
 ```python
 LIGHT: dict[str, Any] = {...}
@@ -149,8 +149,11 @@ def _missing_roles(theme: dict[str, Any]) -> list[str]:
 
 ```python
 digest = sum((i + 1) * ord(ch) for i, ch in enumerate(name))
-return _FAMILY_FALLBACK[digest % len(_FAMILY_FALLBACK)]
+fallback = PALETTE["family_fallback"]
+return fallback[digest % len(fallback)]
 ```
+
+（`_FAMILY_FALLBACK` 这个模块级名字在角色化那一次就没了，现在是调色板里的一个键。）
 
 **不许换成 `hash()`** —— 它按进程加盐，同一份报告每次跑出来颜色都不一样。
 **这条公式也不许改**，改了两套主题之间、以及今天和昨天的同一份报告就对不上了。
@@ -495,9 +498,9 @@ Tk **没有 CSS 的 `linear-gradient`**。想过的两条路都走不通：`Canv
 - [ ] 界面**仍然不计算任何审计结果**（只拼 argv + 读 `report.json`）
 - [ ] API Key **仍然只走环境变量**，没进 argv，也没进主题文件
 - [ ] 窗口**仍然没有**自适应高度
-- [ ] 改完跑了 `python tests\test_gui.py`（45 项）
-- [ ] **动了色表就把上面 §1.2 / §1.3 / §1.4 的表一起改了** —— 有一条测试拿 `ast`
-      解析源码跟这份文档逐字对，改了代码不改文档它立刻红
+- [ ] 改完跑了 `python tests\test_gui.py`（46 项）
+- [ ] **动了色表就把上面 §1.2 / §1.3 / §1.4 的表一起改了** —— 有两条测试拿 `ast`
+      解析源码，跟这份文档逐字对颜色、逐个找名字，改了代码不改文档它们立刻红
 
 ---
 

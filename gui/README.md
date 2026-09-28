@@ -169,7 +169,7 @@ python gui\preview_ui.py clean --theme dark
 
 分两层，都不碰真站。
 
-**`tests\test_gui.py`** —— 45 项，不需要构建产物，CI 的五条腿都会跑（没有 tkinter
+**`tests\test_gui.py`** —— 46 项，不需要构建产物，CI 的五条腿都会跑（没有 tkinter
 的机器，比如 headless Linux runner，会干净地 skip 掉）。它钉的是界面自己决定的东西：
 
 * **key 绝不进命令行。** 把 `subprocess.Popen` 换掉，真的跑一次
@@ -219,6 +219,10 @@ python gui\preview_ui.py clean --theme dark
   而它能坑人的方式只有一种：代码改了、文档还写着旧值，于是一条**已经不存在的规则**继续
   被人遵守。38 行十六进制数字手抄必然漂，所以让测试来抄——它用 `ast` 直接解析源码，
   **不用 tkinter**，所以没有显示器的 CI 腿也真跑。
+* **`DESIGN.md` 也不许点到不存在的东西。** 上一条盯的是值，这一条盯的是名字——它上一版
+  里写的 `_ACCENT_HOVER`、`_SEVERITY_EMPTY_FG`、`_FAMILY_FALLBACK` 全都已经不存在了。
+  测试把文档里每个像标识符的 `` `code span` `` 拿去 `gui/` 里找，找不到就红；两张豁免表
+  （故意提到的历史名字 / Win32 与 Tk 的名字）都短得能一眼看完。
 * **一套测试的颜色不能取决于上一个人点过什么。** 不传 `theme=` 建窗口会去读
   `~/.relaycheck/ui.json`，本文件有 19 处是那么建的；所以模块导入时就把这个查找指到一个
   不存在的路径上，默认主题说了算。顺手钉住「只是把窗口建起来」不会写用户 home 目录——
