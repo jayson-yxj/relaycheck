@@ -6,7 +6,7 @@
 而常量名、函数名、类名可以一直 grep 到：
 
 ```powershell
-Select-String -Path gui\relaycheck_gui.py -Pattern '^_ACCENT ='   # 或者你自己的编辑器搜索
+Select-String -Path gui\relaycheck_gui.py -Pattern '^_CHROME_ROLES'   # 或者你自己的编辑器搜索
 ```
 
 所有视觉常量和状态渲染都在 `gui/relaycheck_gui.py` 里。
@@ -25,62 +25,127 @@ Select-String -Path gui\relaycheck_gui.py -Pattern '^_ACCENT ='   # 或者你自
 
 ## 1. 颜色系统
 
-### 1.1 基础调色板
+### 1.1 两套主题，一份角色表
 
-界面外壳本身**必须是安静的**：证据色和结论色已经在承担全部含义，
-外壳只配拥有一块中性画布和一个非语义的强调色。
+界面外壳本身**必须是安静的**：证据色和结论色已经在承担全部含义，外壳只配拥有一块
+中性画布和一个非语义的强调色。
 
-| 常量 | 值 | 用在哪 |
+从 `_themecut1` 起，颜色不再是一堆散落的模块级常量，而是**两套各 44 个键的调色板**：
+
+```python
+LIGHT: dict[str, Any] = {...}
+DARK:  dict[str, Any] = {...}
+THEMES = {"light": LIGHT, "dark": DARK}
+PALETTE: dict[str, Any] = LIGHT      # 当前生效的那一套
+```
+
+44 = **38 个 chrome 角色**（`_CHROME_ROLES`）+ **6 张语义表**（`verdict` /
+`verdict_fallback` / `fail` / `severity_fill` / `family` / `family_fallback`）。
+
+**两套主题必须提供同一批角色**，少一个就立刻报错 —— 导入时那段守卫直接抛
+`RuntimeError`，而不是等到某一块界面在某些机器上默默画成默认灰：
+
+```python
+def _missing_roles(theme: dict[str, Any]) -> list[str]:
+    return [role for role in _CHROME_ROLES if role not in theme]
+```
+
+有一条测试从反面钉着同一件事：遍历窗口真正问过的角色，两个主题都得答得上来。
+所以**加角色要同时改三处**：`LIGHT`、`DARK`、`_CHROME_ROLES`。
+
+### 1.2 chrome 角色表
+
+| 角色 | 浅色 | 深色 | 用在哪 |
+| --- | --- | --- | --- |
+| `app_bg` | `#f7f2f4` | `#190f12` | 画布本色，也是渐变的中段 |
+| `canvas_ramp_top` | `#fdf3f7` | `#2a1418` | 画布渐变顶端（§7.4） |
+| `canvas_ramp_bottom` | `#f1e7eb` | `#0d0809` | 画布渐变底端 |
+| `surface` | `#ffffff` | `#1e1619` | 卡片、输入框、按钮的正常底色 |
+| `surface_subtle` | `#fbf7f8` | `#261c1f` | 「高级选项」那种内嵌盒子 |
+| `border` | `#e0d0d5` | `#463538` | 输入框描边 |
+| `border_soft` | `#eee3e6` | `#332729` | 区块之间的发丝线 |
+| `rule` | `#e6d8dc` | `#332729` | 卡片内部的分隔线 |
+| `track` | `#ece0e4` | `#332729` | 进度条的槽 |
+| `sash_hint` | `#d4c2c8` | `#463538` | 分隔线那条可见的提示线 |
+| `shade_fallback` | `#f0e6e9` | `#332729` | `_shade()` 解析不了颜色时的兜底 |
+| `progress_fill` | `#60575b` | `#ab9fa1` | 进度条填充。**永远不许是红或绿** |
+| `text` | `#241d1f` | `#f4eeee` | 主要文字 |
+| `text_muted` | `#605759` | `#ab9fa1` | 次要文字、字段说明 |
+| `text_faint` | `#736a6d` | `#7d7274` | 占位符、「空闲」状态点 |
+| `accent` | `#c9297a` | `#e5484d` | 品牌色**当字用**：徽章文字、选中前景、焦点环 |
+| `accent_soft` | `#fdeef3` | `#241014` | 品牌色的极浅底 |
+| `button_primary_bg` | `#ffa8c8` | `#e5484d` | 主按钮底 |
+| `button_primary_hover` | `#ff96bc` | `#f26064` | 主按钮 hover 终点 |
+| `button_primary_fg` | `#4a1226` | `#1a0d0e` | 主按钮字 |
+| `danger` | `#b42318` | `#ff9a94` | 措辞上的危险提示 |
+| `danger_soft` | `#fef3f2` | `#3f1c1f` | 上面那个的浅底 |
+| `spend_warn` | `#a1541a` | `#e8a33d` | 「会消耗你自己的额度」那句 |
+| `severity_empty_fg` | `#78716c` | `#8a7f80` | 计数为 0 的徽章文字（中灰） |
+| `button_secondary_bg` | `#f7eef1` | `#2a2023` | 次级按钮 |
+| `button_secondary_hover` | `#f0e2e7` | `#352a2d` | 次级按钮 hover |
+| `button_danger_hover` | `#fee4e2` | `#4a2226` | 危险按钮 hover |
+| `button_disabled_bg` | `#efe7e9` | `#2b2326` | 禁用态按钮 |
+| `log_bg` | `#1c1618` | `#080506` | 日志面板底 |
+| `log_border` | `#3d3134` | `#463538` | 日志面板的 1px 边框 |
+| `log_head_bg` | `#1c1618` | `#100b0c` | 「运行详情」那一行 |
+| `log_head_fg` | `#f7f2f4` | `#e6dede` | 上面那行的字 |
+| `log_hint_fg` | `#a3969a` | `#8d8285` | 「拖动上方分隔线可调整高度」 |
+| `log_text_bg` | `#151011` | `#080506` | 日志正文底 |
+| `log_text_fg` | `#ded5d7` | `#c9c0c0` | 日志正文 |
+| `log_caret` | `#ffffff` | `#e5484d` | 光标 |
+| `log_select_bg` | `#3d3134` | `#3f3134` | 选中底 |
+| `log_select_fg` | `#ffffff` | `#ffffff` | 选中字 |
+
+两套主题的**取向是一样的，只是各用一半**：
+
+> **浅色**：浅灰画布泛一层浅粉，**深色当强调**（近黑正文、暖黑日志板），粉只做品牌。
+> **深色**：黑画布泛一层暗深红，**红当强调**（主按钮亮红、近黑字），红只做品牌。
+
+浅色下主按钮不能直接用品牌粉：一次干净运行里最重的徽章是 `critical #b91c1c`，粉按钮
+和它只差 1.65:1，两个「重点」会互相取消。深色相反 —— 深底上亮红是唯一能站住的强调。
+
+### 1.3 结论卡片（`verdict` 表，键就是 CLI 自己的 verdict 字符串）
+
+| verdict | 浅色 字/底 | 深色 字/底 |
 | --- | --- | --- |
-| `_APP_BG` | `#f4f6fb` | 窗口底色 |
-| `_SURFACE` | `#ffffff` | 卡片、输入框、按钮的正常底色 |
-| `_SURFACE_SUBTLE` | `#f8fafc` | 「高级选项」那种内嵌盒子 |
-| `_TEXT` | `#101828` | 主要文字 |
-| `_TEXT_MUTED` | `#667085` | 次要文字、字段说明 |
-| `_TEXT_FAINT` | `#98a2b3` | 占位符、「空闲」状态点 |
-| `_BORDER` | `#d0d5dd` | 输入框描边 |
-| `_BORDER_SOFT` | `#e4e7ec` | 区块之间的发丝线 |
-| `_ACCENT` | `#4f46e5` | 主交互色（靛蓝）：主按钮、选中态、运行中状态点 |
-| `_ACCENT_HOVER` | `#4338ca` | 主按钮 hover 终点 |
-| `_ACCENT_SOFT` | `#eef2ff` | 强调色的极浅底 |
-| `_DANGER` | `#b42318` | 措辞上的危险提示（花钱提醒一类的警示文字） |
-| `_DANGER_SOFT` | `#fef3f2` | 上面那个的浅底 |
-| `_FONT` | `Microsoft YaHei UI` | 界面正文 |
-| `_MONO_FONT` | `Consolas` | 只用于家族线索那种要手工对齐的等宽块 |
+| 检测到可直接定性的掉包证据 | `#7f1d1d` / `#fee2e2` | `#ffb3ad` / `#4a1b20` |
+| 检测到高风险问题 | `#7f1d1d` / `#fee2e2` | `#ffb3ad` / `#4a1b20` |
+| 检测到中等问题 | `#78350f` / `#fef3c7` | `#ffd6a0` / `#432d12` |
+| 仅检测到轻微问题 | `#713f12` / `#fef9c3` | `#efe291` / `#3d351a` |
+| 未检测到问题 | `#14532d` / `#dcfce7` | `#8fe4b1` / `#153424` |
+| **跑失败了**（`fail`） | `#7f1d1d` / `#fee2e2` | `#ffb3ad` / `#4a1b20` |
+| 认不出来的 verdict（`verdict_fallback`） | `#4a3f42` / `#f7eef1` | `#d0c7c8` / `#2a2023` |
 
-### 1.2 结论卡片（`VERDICT_STYLE`，键就是 CLI 自己的 verdict 字符串）
-
-| verdict | 字色 | 底色 |
-| --- | --- | --- |
-| 检测到可直接定性的掉包证据 | `#7f1d1d` | `#fee2e2` |
-| 检测到高风险问题 | `#7f1d1d` | `#fee2e2` |
-| 检测到中等问题 | `#78350f` | `#fef3c7` |
-| 仅检测到轻微问题 | `#713f12` | `#fef9c3` |
-| 未检测到问题 | `#14532d` | `#dcfce7` |
-| **跑失败了**（`_FAIL_STYLE`） | `#7f1d1d` | `#fee2e2` |
-
-五档底色**全是浅色**，并且只进入**结论头部**（见 §2）；证据、计数和操作区保持白底。
+底色只进入**结论头部**（见 §2.1）；证据、计数和操作区保持卡片本色。
 这是有意的：整张绿卡会被读成「官方认证通过」，整张红卡会被读成「已经定罪」，
 两者都超过家族级线索能支撑的结论。颜色负责帮助定位结论，不负责替使用者做判断。
 
 未知 verdict **必须退化成中性卡片，不许崩窗口** —— 审计已经跑了三分钟，
 不能因为上游改了个词就什么都看不到。
 
-### 1.3 严重度徽章（`_SEVERITY_FILL` / `_SEVERITY_CHIPS`）
+跑失败走的是 `fail_style()`，而且**只画一次**：`_show_card(..., style=fail_style())`。
+从前是「先按 verdict 画一遍、再在外面重新上一遍色」，那样一来重建只能复现它复现得了
+的那一半。
+
+### 1.4 严重度徽章（`severity_fill` / `_SEVERITY_CHIPS`）
 
 `critical #b91c1c` / `high #c2410c` / `medium #a16207` / `low #4d7c0f` /
 `info #475569` / `clean #15803d`，全部配白字。
 
-计数为 0 的用 `_SEVERITY_EMPTY_FG = #78716c`（中灰），且**不上底色**。
+**这一张表两个主题逐字节相同，而且必须相同。** 它是压在页面上的白字色块，不是画在
+页面上的元素 —— 它自带底色和字色，所以画布是浅是深都不影响它可读。给深色重取一套
+只会让同一份报告在两个主题里看着像两件事。
+
+计数为 0 的用 `severity_empty_fg`（中灰），且**不上底色**。
 
 **这条是铁律，不是审美偏好**：实心红的 `CRITICAL 0` 是个警报，
 而它出现在一次干净运行上时，说的正好和报告相反。
 **填色 = 发生过，灰色 = 没发生。**
 
-### 1.4 厂商色（`_FAMILY_COLORS` / `_FAMILY_FALLBACK` / `family_color()`）
+### 1.5 厂商色（`family` / `family_fallback` / `family_color()`）
 
-`_FAMILY_COLORS` 里有 15 个已知厂商各配固定色；陌生的走 `_FAMILY_FALLBACK`
-里那 6 色，由 `family_color()` 按**位置加权和**取模选中：
+15 个已知厂商各配固定色；陌生的走 `family_fallback` 那 6 色，由 `family_color()`
+按**位置加权和**取模选中：
 
 ```python
 digest = sum((i + 1) * ord(ch) for i, ch in enumerate(name))
@@ -88,21 +153,39 @@ return _FAMILY_FALLBACK[digest % len(_FAMILY_FALLBACK)]
 ```
 
 **不许换成 `hash()`** —— 它按进程加盐，同一份报告每次跑出来颜色都不一样。
+**这条公式也不许改**，改了两套主题之间、以及今天和昨天的同一份报告就对不上了。
 
-理由：`minimax2` 和 `minimax` 要落在不同槽位，而同一家店今天明天必须是同一个颜色。
+深色那 15 个色是**重新取的**：浅色那套是给白底挑的，搬到深色画布上会发糊，最亮的
+几个直接变成灰。
 
-### 1.5 交互色 ≠ 语义色
+### 1.6 品牌色 ≠ 语义色
 
-**绿色不是主按钮的颜色。** 主按钮（开始检测）走 `_ACCENT` 靛蓝。
-绿色在这个界面里只有一个含义：`CLEAN`。
+**绿色不是主按钮的颜色。** 绿色在这个界面里只有一个含义：`CLEAN`。
 
-同一个理由让状态点的颜色也分开了：空闲是 `_TEXT_FAINT`，运行中是 `_ACCENT`。
+**牌子色和「当字用的牌子色」是两个角色。** 主按钮要浅到「少女粉」那种感觉，而同一
+个值还要当徽章文字压在浅粉胶囊上、当 `Listbox` 的选中前景、当焦点环 —— 一个值不可能
+同时干这两件事：粉浅到那个程度，当字读只有两倍出头，`AA` 都守不住。所以拆成
+`accent`（当字）/ `button_primary_bg` / `button_primary_hover` / `button_primary_fg`，
+而 `accent_hover` / `on_accent` 两个旧名字**已经删掉了**。
 
-### 1.6 边框与发丝线
+状态点同理：空闲是 `text_faint`，运行中是 `accent`。
 
-输入框用 `_BORDER`。卡片外框由**结论底色的暗化值**生成
+### 1.7 边框、发丝线与派生色
+
+输入框用 `border`。卡片外框由**结论底色的暗化值**生成
 （`_shade(bg, 0.88)`）写进 `highlightbackground`，这样状态归属能延续到卡片边缘，
-但不会漫灌到证据里。证据区内部的分隔线统一用 `_BORDER_SOFT`。
+但不会漫灌到证据里。证据区内部的分隔线统一用 `rule`。
+
+`_shade()` 只往黑里压（`factor < 1`），`_mix_color()` 在任意两色之间插值。
+两者都按 `[int(color[i:i+2], 16) for i in (1, 3, 5)]` 当场解析 `#rrggbb`，
+**没有单独的解析帮手**（就这两处用到，两个函数各自内联了一遍）。
+
+解析失败时的退路**两者不一样，是有意的**：`_shade()` 退回 `shade_fallback`
+（它要返回一个能当颜色用的值），`_mix_color()` 退回 **`end`**（插值的语义终点，
+比一个来路不明的灰更可预测）。
+
+所以派生色**不需要**每个主题各配一份，它们是从角色值当场算出来的。这也正是
+「换主题只能重建控件树」的根本原因：这些派生值在任何注册表里都不存在。
 
 分界线不用 `ttk.Separator`，用 1px 的 `tk.Frame`（`_add_rule()`）——
 `ttk` 部件不认 `background`，染色会漏掉它。
@@ -113,13 +196,13 @@ return _FAMILY_FALLBACK[digest % len(_FAMILY_FALLBACK)]
 
 ### 2.1 只有结论头部上语义底色
 
-`_tint()` 只给结论头部（`card_header`）上语义底色。下面三个区块永远保持白底：
+`_tint()` 只给结论头部（`card_header`）上语义底色。下面三个区块永远保持卡片本色：
 
 1. 问题数量；
 2. 家族线索；
 3. 复制结论 / 打开报告。
 
-徽章的填充是它自己的含义；计数为 0 时回到白底。按钮保留交互色，不跟随结论底色。
+徽章的填充是它自己的含义；计数为 0 时回到卡片本色。按钮保留交互色，不跟随结论底色。
 
 卡片左侧那条 4px 的状态色轨（`card_accent`）是**用 `place` 摆的**，
 故意留在 pack 顺序之外 —— 否则会打破那些刻意断言 pack 顺序的结果区测试。
@@ -190,7 +273,7 @@ return _FAMILY_FALLBACK[digest % len(_FAMILY_FALLBACK)]
 它读起来像「就这些」。展开「高级」时也必须重新 fit 一次，
 否则卡片的最后一行（复制结论）会被裁掉。
 
-`_SASH_HINT = #c7cdd8` 那条 2px 线是必需的：
+`sash_hint` 那条 3px 线（`tk.Frame`）是必需的：
 `vista` 主题下 ttk 把 sash 画成窗口背景色，**实测那一块完全没有可见的分隔线**。
 
 ---
@@ -207,16 +290,25 @@ return _FAMILY_FALLBACK[digest % len(_FAMILY_FALLBACK)]
 | `_button()` 内部 | 按钮 hover 着色的 6 帧，每帧 15 ms |
 | `_copy_card()` | 「已复制到剪贴板」2500 ms 后自清 |
 | `_fetch_models()` | 把「取模型列表」的结果抛回 Tk 线程 |
-| `_start()` / `_drain()` | `_drain` 每 120 ms 轮询子进程管道 |
+| `_start()` | 起手就排第一次 `_drain` |
+| `_drain()` | 自己排自己，每 120 ms 轮询子进程管道 |
+
+最后两行是**同一句** `self.root.after(120, self._drain)`，所以上表 5 行 = 5 个站点。
+
+**这个数是硬约束。** 画布渐变（§7.4）当初就是为了不新增第 6 处，才挂进已有的
+`<Configure>` 处理器（`_on_top_resize` / `_on_log_resize`）里。
 
 ### 5.1 进度条是自绘的（`ExactProgress`）
 
 **不要换回 `ttk.Progressbar`。** Windows 上默认的 `vista` 主题**即使指定了具名
-style 也会把它画成绿色**，而绿色在这个界面里是语义色（= CLEAN，见 §1.5）。
+style 也会把它画成绿色**，而绿色在这个界面里是语义色（= CLEAN，见 §1.6）。
 一个正在跑的绿色进度条会和「查过了、没问题」撞色。
 
-所以 `ExactProgress` 是个自绘的 `tk.Frame`：浅灰轨道 + 内嵌的 `_ACCENT` 填充帧，
-`pack_propagate(False)` 固定 `height=8`，用 `place(relwidth=ratio)` 推进。
+所以 `ExactProgress` 是个自绘的 `tk.Frame`：`track` 色的轨道 + 内嵌的 `progress_fill`
+填充帧，`pack_propagate(False)` 固定 `height=8`，用 `place(relwidth=ratio)` 推进。
+
+**填充色是独立的一个角色**，不是 `accent`：让进度条的填充跟着品牌色跑，等于把品牌色
+拖进语义区（深色下 `accent` 是红的，一根红进度条在跑起来时读起来像告警）。
 
 它对 `ttk.Progressbar` 做了**鸭子类型兼容** —— `configure()` 收下 `maximum`/`value`
 并转存成私有值，`cget()` 和 `__getitem__` 也认这两个键。
@@ -252,6 +344,8 @@ style 也会把它画成绿色**，而绿色在这个界面里是语义色（= C
 
 ## 6. 图标
 
+### 6.1 应用图标
+
 `gui/relaycheck.ico` / `relaycheck.png` 是 `gui/make_icon.py` **生成**的，
 不要手改这两个二进制文件。改几何参数然后重跑生成器。
 
@@ -266,59 +360,198 @@ style 也会把它画成绿色**，而绿色在这个界面里是语义色（= C
 `tests/test_gui.py` 直接解析 ICO 头校验七档尺寸，
 **不依赖 Pillow**（CI 只装 `requests` + `pytest`）。
 
+### 6.2 主题太阳 / 月亮（`theme_icon()` / `_icon_coverage()`）
+
+**不要用 Unicode 的 `☀` / `☾`。** 那两个码位不在 `Microsoft YaHei UI` 里，
+Tk 会回退到别的字体，回退字体的行高不一样，而标题那一行是**手工对齐**的 ——
+一个字符就能让整行错位。
+
+所以太阳和月亮是逐像素画出来的 16×16 `tk.PhotoImage`：`_icon_coverage()` 做 4×4
+超采样，`theme_icon()` 按覆盖率在底色的基础上插值出前景色（朴素画法在 16px 上会是
+一圈锯齿）。
+
+**同一句「能活过 16px 的才叫 icon」** 在这里的直接后果是：**太阳没有光芒射线**，
+只有一个圆盘加四道很短的芒。测试钉住的是 `sun.get(8, 0) != 底色`，也就是「16px 下
+还看得出是太阳而不是一颗指示灯」。
+
+按钮上写的是**按下去会变成什么**（浅色主题里按钮文字是「深色」），不是「现在是什么」：
+一个写着「深色」的按钮待在深色窗口里，两件事都说得通，用户只能点一下试试。
+
 ---
 
-## 7. 改动禁区清单
+## 7. 主题开关
+
+### 7.1 为什么是「重建」而不是「重新刷色」
+
+tkinter **在构造控件的时候就把颜色烤进去了**。换主题只有两条路：
+
+* 遍历整棵控件树重新 `configure` —— 得把每一个派生颜色（`_shade(bg, 0.88)`、
+  `_tint()`）都算对，而且那些值在任何注册表里都不存在。**漏一个的表现恰好是
+  「大部分变了、这一块没变」**，最难发现的那种。
+* **拆掉重建成一遍。** 结构上不可能漏。
+
+选的是后者。代价是重建前得自己把「用户的东西」搬过去。
+
+### 7.2 重建必须搬走的东西
+
+`_rebuild()` 里逐条列着，改动时**一样都不能少**。分两类：
+
+**第一类不用搬 —— 它们压根不在树里。** `_create_vars()` 是**唯一**建
+`tk.Variable` 的地方，而且只在 `__init__` 里调一次（重建**不**调它，重建调它
+就等于把用户打了一半的字抹掉）。一共 11 个：
+
+| 变量 | 存什么 |
+| --- | --- |
+| `url_var` / `key_var` / `models_var` / `outdir_var` | 地址、Key、模型清单、输出目录 |
+| `strength_var` / `maxmodels_var` / `timeout_var` / `budget_var` | 高级那四项（`default` / `6` / `60` / `240`） |
+| `show_key` / `adv_open` | 两个 `BooleanVar` |
+| `status_var` | 状态行文字（`空闲` / `结束（退出码 0）` / …） |
+
+控件是拿它们绑的（`textvariable=` / `variable=`），变量活着，新控件自己就接上了。
+
+**第二类必须显式搬走**，`_rebuild()` 按这个顺序做：
+
+1. **日志正文**和滚动位置（`yview()[0]`）。
+2. **模型列表**的已选下标（`curselection()`）。
+3. **进度条真画到哪**（`_progress_seen`，不是 `_probes_done` —— 后者是「这一轮
+   跑了多少项」，只有 `_note_progress` 会动，画过的值才是它）。
+4. **分界线的位置**（`_sash_restore`），交给 `_on_paned_configure` 在布局之后放回去。
+5. **结论卡片**（`_card_args`）—— 所以 `_show_card()` 把**自己收到的那一整组参数**
+   记下来，而不是让调用方另外描述一遍。
+6. **跑没跑**（`running`），重建完立刻 `_set_running(running)` 把按钮禁用态和
+   状态点的颜色摆回去。
+7. **图标缓存要清掉**（`self._theme_icon.clear()`）。`tk.PhotoImage` 是**逐像素
+   按当前调色板画出来的**，缓存下来复用等于把上一个主题的太阳留到新背景上。
+
+还有两样是普通 Python 属性，重建天然动不到，但必须存在：`self._model_names`
+（模型清单本身）和 `self._progress_seen`。
+
+有一条测试走完整一遍：填地址/Key/模型/输出目录 → 画卡片 → 写日志 → 设进度 →
+换主题，然后逐项断言还活着。另一条走 **浅色 → 深色 → 浅色**，要求落回**同一批
+颜色**，并用变异测试证明它真的抓得住（把量化缓存的重置拆掉，它立刻红）。
+
+### 7.3 主题文件里只有主题
+
+选择记在 `~/.relaycheck/ui.json`（或 `RELAYCHECK_GUI_CONFIG` 指向的位置），
+内容**恰好**是：
+
+```json
+{"theme": "dark"}
+```
+
+窗口上印着「Key 不落盘」，所以这个文件不能把这句话捅破 —— 有测试断言它只有一个键、
+且不含地址和 Key。写不进去（只读目录、没权限）就静默放弃：记不住偏好不是错误。
+
+### 7.4 画布渐变
+
+Tk **没有 CSS 的 `linear-gradient`**。想过的两条路都走不通：`Canvas` + `PhotoImage`
+只能盖住 `content` 没铺到的那二十来像素侧边；全屏 `create_window` 会打乱 pack 顺序，
+而测试依赖它。
+
+最后落到的做法：**每一个会露出画布的容器自己带一张满尺寸 `Canvas`**
+（`_canvas_pane()`），每 6px 一段**实心方块**，取色一律用**绝对 y**，三张拼起来是
+同一条曲线。
+
+三个坑，都是踩过才知道的：
+
+1. **只给每个容器算一个颜色不算渐变。** 第一版就是那样：取容器自己中心的 y，于是
+   整块画布是一块平色、两个 pane 的交界处一条硬边。截图逐像素采样证明窗口顶部根本
+   不是最亮的那一点 —— 那不是渐变，是把窗口切成了两块。
+2. **画 1px 的横线会在缝里露出画布本色**，出来的是一张条纹纸。必须画首尾相接的
+   实心方块。有测试断言块与块之间不留缝。
+3. **带宽取 6px 就够。** 整条坡的亮度跨度只有 0.09 上下，相邻两条差 0.0007，远在
+   可辨阈值（约 0.01）之下；再宽就看得见台阶，再窄只是白画几百个 item。
+
+`height <= 1`（还没布局）时**直接返回**：那时候刷一遍等于把所有画布控件染成同一个
+端点色，窗口上看到的就不再是调色板里的 `app_bg` 了。同理，`app_bg` 是渐变的中段，
+渐变整个失效时它仍然是一块完整的画布色。
+
+画布渐变**不新增 `after()` 站点**（§5），它挂在已有的 `<Configure>` 处理器上。
+
+---
+
+## 8. 改动禁区清单
 
 改任何一处之前先确认没有踩到：
 
 - [ ] 没有引入新依赖（不许 `pip install` 任何东西）
 - [ ] 没有调用 `theme_use()`（默认 `vista` 就是设计，进度条是自绘的）
 - [ ] 没有把进度条换回 `ttk.Progressbar`（会被画成绿色，和 CLEAN 撞色）
+- [ ] **进度条的填充色仍然不是红、也不是绿**
 - [ ] **绿色仍然不是主按钮的颜色**
+- [ ] 新加的 chrome 角色**两个主题都给了**，并且进了 `_CHROME_ROLES`
+- [ ] `severity_fill` **两个主题仍然逐字节相同**
 - [ ] 没有为了好看改动 `EXIT_OK/FINDINGS/ERROR` 三者之一
 - [ ] 计数为 0 的徽章**仍然没有底色**
 - [ ] 家族线索里**只有自称那一段**被上色
-- [ ] 厂商色仍然确定性（没有 `hash()`）
+- [ ] 厂商色仍然确定性（没有 `hash()`），`family_color()` 的公式没动
+- [ ] 主题文件里**仍然只有 `theme` 一个键**
+- [ ] 换主题**仍然不丢**用户输入、已测结果、日志正文和分界线位置
+- [ ] 画布渐变**仍然没有新增 `after()` 站点**（还是 5 处）
 - [ ] CLEAN / INFO 的记录**仍然没有**被叫做「最严重的一条」
 - [ ] 没查成的卡片**仍然隐藏**「问题数量」那一段，而不是显示一排 0
 - [ ] 「高级」**仍然默认收起**，且收起**不重置**里面的值
 - [ ] 卡片**仍然不替使用者下结论**
 - [ ] 界面**仍然不计算任何审计结果**（只拼 argv + 读 `report.json`）
-- [ ] API Key **仍然只走环境变量**，没进 argv
+- [ ] API Key **仍然只走环境变量**，没进 argv，也没进主题文件
 - [ ] 窗口**仍然没有**自适应高度
-- [ ] 改完跑了 `python tests\test_gui.py`（34 项）
+- [ ] 改完跑了 `python tests\test_gui.py`（44 项）
+- [ ] **动了色表就把上面 §1.2 / §1.3 / §1.4 的表一起改了** —— 有一条测试拿 `ast`
+      解析源码跟这份文档逐字对，改了代码不改文档它立刻红
 
 ---
 
-## 8. 怎么看改完的样子
+## 9. 怎么看改完的样子
 
-### 8.1 先看不发请求的预览
+### 9.1 先看不发请求的预览
 
 `gui/preview_ui.py` 能直接摆出六种状态，**不建客户端、不发请求、不写报告**：
 
 ```powershell
-python gui\preview_ui.py clean      # initial / advanced / running / clean / problem / failure
+python gui\preview_ui.py clean                  # initial / advanced / running / clean / problem / failure
+python gui\preview_ui.py clean --theme dark
 ```
+
+`--theme` 把调色板钉死。不钉死的话预览会跟着 `~/.relaycheck/ui.json` 里上一位使用者
+存的选择跑，深浅两套的回归截图就没法比了。
 
 它跟真实运行共用同一套渲染函数，所以它不是「第二套报告逻辑」。
 **动外观时先用这个看**，几秒钟一轮，不花额度。
 
-### 8.2 再看真窗口
+### 9.2 再看真窗口
 
 **不要用 `CopyFromScreen`** —— 它抓到的是碰巧在最上面的窗口（第一次抓到了一张
 资源管理器）。
 
-窗口程序走 `PrintWindow(hwnd, hdc, PW_RENDERFULLCONTENT)`，与 Z 序无关：
+窗口程序走 `PrintWindow(hwnd, hdc, PW_RENDERFULLCONTENT)`，与 Z 序无关。
+大意是这样（`ctypes`，不装任何东西）：
 
-```powershell
-python D:\dsh-work\_tools\shot.py out.png "relaycheck"
+```python
+user32.PrintWindow(hwnd, mdc, 2)          # 2 = PW_RENDERFULLCONTENT
+gdi32.GetDIBits(mdc, bmp, 0, h, buf, byref(bi), 0)   # bi.biHeight = -h（自顶向下）
+img = Image.frombytes("RGBA", (w, h), ctypes.string_at(buf, w * h * 4),
+                      "raw", "BGRA", 0, 1)
 ```
+
+**`Image.frombytes` 是必须的。** 换成 `Image.frombuffer` —— 也就是让 PIL 直接
+看一眼 ctypes 那块缓冲 —— 保存时会出现 `SystemError: tile cannot extend outside
+image`。抓的时候是好的，落盘时才炸。
+
+找窗口用 `EnumWindows` + `GetWindowTextLengthW() > 0` + `IsWindowVisible`，
+**不需要把窗口提到前台**。
+
+**同一个状态抓两次**，再逐像素比：`PrintWindow` 可能赶在 Tk 画完之前返回，第二张才是
+算数的那张，两张的差异就是稳定性证据。比较之前要裁掉 DWM 画的标题栏（Tk 碰不到它），
+裁完的客户区必须正好 `980x800` —— 裁剪常量 `(8, 31, 8, 8)`：996×839 减掉这四边正好
+是 980×800。裁错了（比如没裁标题栏）会冒出一片 `bbox=(37, 10, 969, 23)` 的假差异。
+
+**每次抓之前先把旧的 PNG 删掉**：中间崩了的话，上一轮的旧图会被当成这一轮的结果
+静默复用，看起来一切正常。
 
 注意 **「高级」默认收起**，所以截图上看不到强度选项那段文案 ——
 要点一下 `›  高级选项（通常无需调整）` 才出现。
 
-### 8.3 最后必须重建再看真东西
+### 9.3 最后必须重建再看真东西
 
 改完外观**必须重建再看真东西**（控件几何、图标、DPI 都只有真 exe 才作数）：
 

@@ -36,6 +36,7 @@ Run with pytest, or directly::
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import inspect
 import io
@@ -1584,6 +1585,54 @@ def test_the_theme_is_remembered_in_a_file_that_holds_nothing_else() -> None:
         assert [p.name for p in tmp.iterdir()] == ["ui.json"], "多写了别的文件"
         assert G.load_theme() == "dark"
 
+
+def test_the_design_document_lists_the_colours_that_are_in_the_code() -> None:
+    """``gui/DESIGN.md`` 的色表必须和模块里的两套调色板逐字相同。
+
+    这份文档存在的唯一理由是「什么叫改对了」，而被它坑过的方式也只有一种：代码
+    改了、文档还写着旧值，于是一条已经不存在的规则继续被人遵守。手抄 38 行十六
+    进制数字正是会这样漂的东西，所以让测试来抄。
+
+    故意**不用 tkinter**（``ast`` 直接解析源码），这样没有显示器的 CI 腿也真跑。
+    """
+    source = (ROOT / "gui" / "relaycheck_gui.py").read_text(encoding="utf-8")
+    doc = (ROOT / "gui" / "DESIGN.md").read_text(encoding="utf-8")
+
+    palettes: dict[str, dict[str, object]] = {}
+    chrome: list[str] = []
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            if node.target.id in {"LIGHT", "DARK"}:
+                palettes[node.target.id] = ast.literal_eval(node.value)
+        elif isinstance(node, ast.Assign):
+            if any(
+                isinstance(t, ast.Name) and t.id == "_CHROME_ROLES" for t in node.targets
+            ):
+                chrome = list(ast.literal_eval(node.value))
+    assert set(palettes) == {"LIGHT", "DARK"}, f"解析不出两套调色板: {sorted(palettes)}"
+    assert chrome, "找不到 _CHROME_ROLES"
+
+    rows = re.findall(
+        r"^\| `([a-z_]+)` \| `(#[0-9a-f]{6})` \| `(#[0-9a-f]{6})` \|",
+        doc,
+        re.MULTILINE,
+    )
+    assert len(rows) == len(chrome), (
+        f"DESIGN.md 的色表里有 {len(rows)} 行，代码里有 {len(chrome)} 个 chrome 角色"
+    )
+
+    listed = {role for role, _, _ in rows}
+    assert listed == set(chrome), (
+        f"文档与代码的角色对不上 —— 只在文档里: {sorted(listed - set(chrome))}；"
+        f"只在代码里: {sorted(set(chrome) - listed)}"
+    )
+    for role, light, dark in rows:
+        assert palettes["LIGHT"][role] == light, (
+            f"{role} 的浅色：文档 {light}，代码 {palettes['LIGHT'][role]}"
+        )
+        assert palettes["DARK"][role] == dark, (
+            f"{role} 的深色：文档 {dark}，代码 {palettes['DARK'][role]}"
+        )
 
 
 # --------------------------------------------------------------------- runner
