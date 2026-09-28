@@ -90,7 +90,7 @@ def show(state: str) -> None:
         app._set_running(True)
         app._set_progress(5, 8)
         app.status_var.set("第 6/8 项：identity")
-        app.status_dot.configure(foreground=G._ACCENT)
+        app.status_dot.configure(foreground=G.PALETTE["accent"])
         app._show_card("正在检测…", "已启动，输出会实时显示在下面。", None)
         _fill_log(app)
     elif state == "clean":
@@ -99,7 +99,7 @@ def show(state: str) -> None:
         report = _identity_report(False)
         app._show_card(
             "未检测到问题",
-            G.VERDICT_STYLE["未检测到问题"][2],
+            G.verdict_text("未检测到问题"),
             {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 7, "clean": 2},
             G._family_rows(report),
             actions=True,
@@ -111,7 +111,7 @@ def show(state: str) -> None:
         report = _identity_report(True)
         app._show_card(
             "检测到高风险问题",
-            G.VERDICT_STYLE["检测到高风险问题"][2]
+            G.verdict_text("检测到高风险问题")
             + "\n最严重的一条：twins-100  不同名称返回了逐字一致的开放式回答",
             {"critical": 0, "high": 2, "medium": 1, "low": 0, "info": 4, "clean": 1},
             G._family_rows(report),
@@ -119,7 +119,7 @@ def show(state: str) -> None:
         )
         _fill_log(app)
     elif state == "failure":
-        fg, bg, detail = G._FAIL_STYLE
+        fg, bg, detail = G.fail_style()
         app.status_var.set("提前结束（3/8 项，退出码 2）")
         app._set_progress(3, 8)
         app._show_card("运行失败", detail, None, actions=True)

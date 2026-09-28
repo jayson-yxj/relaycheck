@@ -59,92 +59,47 @@ from relaycheck.client import RelayClient, RelayError  # noqa: E402
 
 APP_TITLE = "relaycheck 桌面版"
 
-# ---------------------------------------------------------------- visual system
+# ---------------------------------------------------------------- palettes
 
-# Keep the desktop shell visually quiet: evidence and verdict colours already
-# carry meaning, so the application chrome gets one neutral canvas and one
-# non-semantic accent.  In particular, green is deliberately *not* the primary
-# action colour — green belongs to CLEAN and must keep that meaning.
-_APP_BG = "#f4f6fb"
-_SURFACE = "#ffffff"
-_SURFACE_SUBTLE = "#f8fafc"
-_TEXT = "#101828"
-_TEXT_MUTED = "#667085"
-_TEXT_FAINT = "#98a2b3"
-_BORDER = "#d0d5dd"
-_BORDER_SOFT = "#e4e7ec"
-_ACCENT = "#4f46e5"
-_ACCENT_HOVER = "#4338ca"
-_ACCENT_SOFT = "#eef2ff"
-_DANGER = "#b42318"
-_DANGER_SOFT = "#fef3f2"
+# 窗口里每个颜色都按「角色」取名（画布 / 禁用按钮底 / CLEAN 小胶囊），不按颜色值
+# 取名 —— 同一个角色在深色画布上必须是另一个值。于是一个主题就是一张「角色 ->
+# 色值」表，而切主题只有两步：换掉 ``PALETTE``，重建控件树，没有第三种机制。
+#
+# 表里有两条必须守住的规则：
+#
+# * severity 小胶囊是压在页面上的白字色块，不是画在页面上的元素，所以它在两个主题
+#   里一个字都不改 —— 这是颜色和背景唯一互不影响的地方。
+# * 绿是 CLEAN 的语义色，任何主题里都不能拿它当品牌色或主按钮色。
 
-# The rest of the chrome used to spell its colours out at the point of use.  Each
-# one is a *theme* value rather than a one-off: on a dark canvas a hard-coded
-# "#101828" stays light-on-light and the log turns into a grey rectangle.  Naming
-# them here gives every role exactly one place to change, so a theme becomes a
-# rebinding of names instead of a hunt through 1800 lines.
-_ON_ACCENT = "#ffffff"            # label drawn on a filled accent button
-_BUTTON_SECONDARY_BG = "#f2f4f7"
-_BUTTON_SECONDARY_HOVER = "#e4e7ec"
-_BUTTON_DANGER_HOVER = "#fee4e2"
-_BUTTON_DISABLED_BG = "#eaecf0"
-_TRACK = "#eaecf0"                # progress bar trough
-_RULE = "#dddddd"                 # 1px divider inside a card
-_SHADE_FALLBACK = "#dddddd"       # _shade() could not parse its input
-_SPEND_WARN = "#a1541a"           # the "this spends your own quota" line
+#: 每个主题都必须提供的角色。少了哪一个，测试会立刻说出来。
+_CHROME_ROLES = (
+    "app_bg", "surface", "surface_subtle", "text", "text_muted", "text_faint",
+    "border", "border_soft", "accent", "accent_hover", "accent_soft", "on_accent",
+    "danger", "danger_soft", "button_secondary_bg", "button_secondary_hover",
+    "button_danger_hover", "button_disabled_bg", "track", "rule",
+    "shade_fallback", "spend_warn", "log_bg", "log_border", "log_head_bg",
+    "log_head_fg", "log_hint_fg", "log_text_bg", "log_text_fg", "log_caret",
+    "log_select_bg", "log_select_fg", "sash_hint", "severity_empty_fg",
+)
 
-#: The log pane is deliberately the inverse of the page: a dark viewport the
-#: evidence lands in.  Backgrounds and foregrounds are pairs — never swap one half.
-_LOG_BG = "#101828"
-_LOG_BORDER = "#344054"
-_LOG_HEAD_BG = "#101828"
-_LOG_HEAD_FG = "#f2f4f7"
-_LOG_HINT_FG = "#667085"
-_LOG_TEXT_BG = "#0b1220"
-_LOG_TEXT_FG = "#d0d5dd"
-_LOG_CARET = "#ffffff"
-_LOG_SELECT_BG = "#344054"
-_LOG_SELECT_FG = "#ffffff"
-
-#: Shown when the CLI reports a verdict string this build does not know.
-_VERDICT_FALLBACK: tuple[str, str, str] = ("#344054", "#f2f4f7", "")
-
-_FONT = "Microsoft YaHei UI"
-_MONO_FONT = "Consolas"
-
-#: ``(前景色, 背景色, 给小白看的一句话)`` keyed by the CLI's own verdict string.
-#: Kept in sync with ``reporter.Report.verdict``; an unknown verdict falls back to
-#: a neutral card rather than crashing the window after a 3-minute audit.
-VERDICT_STYLE: dict[str, tuple[str, str, str]] = {
+#: 卡片上那句话的措辞。跟颜色无关，所以不跟着主题走。
+_VERDICT_TEXT: dict[str, str] = {
     "检测到可直接定性的掉包证据": (
-        "#7f1d1d", "#fee2e2",
         "被测站返回了无法用正常行为解释的证据。可以把这个目录里的 report.md "
-        "直接发给商家对质。",
+        "直接发给商家对质。"
     ),
-    "检测到高风险问题": (
-        "#7f1d1d", "#fee2e2",
-        "发现了值得认真对待的问题。请打开 report.md 看具体是哪几条。",
-    ),
-    "检测到中等问题": (
-        "#78350f", "#fef3c7",
-        "发现了异常，但单独一条不足以定性。建议结合报告自行复核。",
-    ),
-    "仅检测到轻微问题": (
-        "#713f12", "#fef9c3",
-        "只有轻微异常。多数情况是正常转售带来的副作用，不构成指控。",
-    ),
+    "检测到高风险问题": "发现了值得认真对待的问题。请打开 report.md 看具体是哪几条。",
+    "检测到中等问题": "发现了异常，但单独一条不足以定性。建议结合报告自行复核。",
+    "仅检测到轻微问题": "只有轻微异常。多数情况是正常转售带来的副作用，不构成指控。",
     "未检测到问题": (
-        "#14532d", "#dcfce7",
         "本次没有发现达到阈值的问题。注意：这只代表「这次没查出来」，"
-        "不等于「这家站一定没问题」—— 本工具只能给到家族级线索。",
+        "不等于「这家站一定没问题」—— 本工具只能给到家族级线索。"
     ),
 }
 
-_FAIL_STYLE = (
-    "#7f1d1d", "#fee2e2",
+_FAIL_TEXT = (
     "这次没查成，没有生成报告。这不代表中转站有问题，也不代表没问题 —— "
-    "只代表这一次没查成。下面是原始输出。",
+    "只代表这一次没查成。下面是原始输出。"
 )
 
 _SEVERITY_CHIPS: tuple[tuple[str, str], ...] = (
@@ -156,24 +111,6 @@ _SEVERITY_CHIPS: tuple[tuple[str, str], ...] = (
     ("clean", "CLEAN"),
 )
 
-#: ``(底色, 字色)`` for a severity chip **whose count is not zero**. A chip that
-#: reads zero is deliberately left unfilled and greyed instead: ``CRITICAL=0`` on a
-#: solid red badge is an alarm, and on a clean run it is the exact opposite of what
-#: the report says. Filled means "this happened"; grey means "this did not".
-_SEVERITY_FILL: dict[str, tuple[str, str]] = {
-    "critical": ("#b91c1c", "#ffffff"),
-    "high": ("#c2410c", "#ffffff"),
-    "medium": ("#a16207", "#ffffff"),
-    "low": ("#4d7c0f", "#ffffff"),
-    "info": ("#475569", "#ffffff"),
-    "clean": ("#15803d", "#ffffff"),
-}
-
-#: Grey for a zero-count chip. Every card background is light (see
-#: ``VERDICT_STYLE``), so one mid-dark grey stays legible on all of them and reads
-#: as inactive next to a white-on-colour filled chip.
-_SEVERITY_EMPTY_FG = "#78716c"
-
 #: The 高级 disclosure, closed and open. The panel holds three settings that are
 #: all already correct for the overwhelming majority of runs, and it costs about a
 #: third of the form's height to show them. Closed by default is the point — the
@@ -181,41 +118,125 @@ _SEVERITY_EMPTY_FG = "#78716c"
 _ADV_CLOSED = "›  高级选项（通常无需调整）"
 _ADV_OPEN = "⌄  高级选项（通常无需调整）"
 
-#: The line that says the log pane can be dragged. Only ever seen, never clicked:
-#: the draggable part is the sash just above it.
-_SASH_HINT = "#c7cdd8"
-
-#: Vendor → colour. Colouring the *self-reported* family is the whole point of the
-#: tinting: two models that both answer "I was created by OpenAI" light up the same
-#: colour, which is what makes the stock-boilerplate tell visible at a glance
-#: instead of something the reader has to notice by reading every line.
-#:
-#: This is identity grouping, **not** guilt. A tint says "these two claims are the
-#: same claim", never "this model is a fake". The card's own caption still carries
-#: the caveat, because colour is exactly where a lead gets mistaken for a verdict.
-_FAMILY_COLORS: dict[str, str] = {
-    "openai": "#0f766e",
-    "anthropic": "#7c3aed",
-    "deepseek": "#1d4ed8",
-    "google": "#b45309",
-    "meta": "#0369a1",
-    "mistral": "#c2410c",
-    "minimax": "#be123c",
-    "qwen": "#4d7c0f",
-    "zhipu": "#a21caf",
-    "moonshot": "#0e7490",
-    "xai": "#374151",
-    "cohere": "#9333ea",
-    "amazon": "#a16207",
-    "microsoft": "#1e40af",
-    "nvidia": "#15803d",
+LIGHT: dict[str, Any] = {
+    # 画布与分层
+    "app_bg": "#f4f6fb",
+    "surface": "#ffffff",
+    "surface_subtle": "#f8fafc",
+    "border": "#d0d5dd",
+    "border_soft": "#e4e7ec",
+    "rule": "#dddddd",
+    "track": "#eaecf0",
+    "sash_hint": "#c7cdd8",
+    "shade_fallback": "#dddddd",
+    # 文字。text_faint 在白底上只有 2.58:1 —— 它只用在「这一栏这次没测」这种
+    # 明确次要的说明上，不承载任何结论。
+    "text": "#101828",
+    "text_muted": "#667085",
+    "text_faint": "#98a2b3",
+    # 品牌与语义。绿留给 CLEAN，绝不在这里出现。
+    "accent": "#4f46e5",
+    "accent_hover": "#4338ca",
+    "accent_soft": "#eef2ff",
+    "on_accent": "#ffffff",
+    "danger": "#b42318",
+    "danger_soft": "#fef3f2",
+    "spend_warn": "#a1541a",
+    "severity_empty_fg": "#78716c",
+    # 按钮
+    "button_secondary_bg": "#f2f4f7",
+    "button_secondary_hover": "#e4e7ec",
+    "button_danger_hover": "#fee4e2",
+    "button_disabled_bg": "#eaecf0",
+    # 日志面板。浅色下它是压在浅色页面上的黑板，是下半屏的视觉锚点。
+    "log_bg": "#101828",
+    "log_border": "#344054",
+    "log_head_bg": "#101828",
+    "log_head_fg": "#f2f4f7",
+    "log_hint_fg": "#667085",
+    "log_text_bg": "#0b1220",
+    "log_text_fg": "#d0d5dd",
+    "log_caret": "#ffffff",
+    "log_select_bg": "#344054",
+    "log_select_fg": "#ffffff",
+    # 结论卡片：``(前景, 背景)``，与 ``_VERDICT_TEXT`` 同一批 key。
+    "verdict": {
+        "检测到可直接定性的掉包证据": ("#7f1d1d", "#fee2e2"),
+        "检测到高风险问题": ("#7f1d1d", "#fee2e2"),
+        "检测到中等问题": ("#78350f", "#fef3c7"),
+        "仅检测到轻微问题": ("#713f12", "#fef9c3"),
+        "未检测到问题": ("#14532d", "#dcfce7"),
+    },
+    #: 认不出来的 verdict 走中性卡片，而不是让窗口在一次三分钟的检测之后崩掉。
+    "verdict_fallback": ("#344054", "#f2f4f7"),
+    "fail": ("#7f1d1d", "#fee2e2"),
+    #: 白字填充块，两个主题共用（见文件头第 1 条规则）。一个读数是零的胶囊故意
+    #: 不填色：``CRITICAL=0`` 配一块实心红是警报，而干净的一跑里它正好说反了。
+    "severity_fill": {
+        "critical": ("#b91c1c", "#ffffff"),
+        "high": ("#c2410c", "#ffffff"),
+        "medium": ("#a16207", "#ffffff"),
+        "low": ("#4d7c0f", "#ffffff"),
+        "info": ("#475569", "#ffffff"),
+        "clean": ("#15803d", "#ffffff"),
+    },
+    # 厂商色。给**自称的**厂商上色才是重点：两个都答「I was created by OpenAI」
+    # 的模型亮同一个色，那条模板化回答才看得出来。这是身份分组，不是定罪 ——
+    # 一个色说明「这两句话是同一句话」，从不说「这个模型是假的」。
+    "family": {
+        "openai": "#0f766e",
+        "anthropic": "#7c3aed",
+        "deepseek": "#1d4ed8",
+        "google": "#b45309",
+        "meta": "#0369a1",
+        "mistral": "#c2410c",
+        "minimax": "#be123c",
+        "qwen": "#4d7c0f",
+        "zhipu": "#a21caf",
+        "moonshot": "#0e7490",
+        "xai": "#374151",
+        "cohere": "#9333ea",
+        "amazon": "#a16207",
+        "microsoft": "#1e40af",
+        "nvidia": "#15803d",
+    },
+    #: 没见过的厂商也要拿到一个稳定的色，而不是没有色。用确定性哈希选槽，绝不用
+    #: ``hash()`` —— 那个每进程加盐，同一份报告每次跑出来颜色都不一样。
+    "family_fallback": ("#0f766e", "#1d4ed8", "#be123c", "#a16207", "#7c3aed", "#0e7490"),
 }
 
-#: Used for a family this build has never heard of, so a new vendor still gets a
-#: stable tint instead of no tint. Picked by a deterministic hash, never by
-#: ``hash()`` — that is salted per process, and the same report would then come out
-#: in different colours on every run.
-_FAMILY_FALLBACK = ("#0f766e", "#1d4ed8", "#be123c", "#a16207", "#7c3aed", "#0e7490")
+THEMES: dict[str, dict[str, Any]] = {"light": LIGHT}
+
+#: 当前生效的调色板。tkinter 是在构造控件时读颜色的，所以换主题只能是「换掉这个
+#: 引用 + 重建控件树」；任何跨重建缓存了颜色值的地方都会渲染成旧主题。
+PALETTE: dict[str, Any] = LIGHT
+
+
+def verdict_style(verdict: str) -> tuple[str, str, str]:
+    """``(前景色, 背景色, 给小白看的一句话)``，认不出来的 verdict 走中性卡片。"""
+    fg, bg = PALETTE["verdict"].get(verdict, PALETTE["verdict_fallback"])
+    return fg, bg, _VERDICT_TEXT.get(verdict, "")
+
+
+def verdict_text(verdict: str, default: str = "见报告。") -> str:
+    """只有文案，不要颜色 —— 纯文本报告和剪贴板走这条。"""
+    return _VERDICT_TEXT.get(verdict, default)
+
+
+def fail_style() -> tuple[str, str, str]:
+    fg, bg = PALETTE["fail"]
+    return fg, bg, _FAIL_TEXT
+
+
+def severity_fill(key: str) -> tuple[str, str]:
+    """一个**计数不为零**的 severity 胶囊的配色。计数为零的胶囊不填色。"""
+    fills = PALETTE["severity_fill"]
+    return fills.get(key, fills["info"])
+
+
+_FONT = "Microsoft YaHei UI"
+_MONO_FONT = "Consolas"
+
 
 
 def family_color(family: str) -> str | None:
@@ -227,12 +248,14 @@ def family_color(family: str) -> str | None:
     name = family.strip().lower()
     if not name:
         return None
-    if name in _FAMILY_COLORS:
-        return _FAMILY_COLORS[name]
+    tinted = PALETTE["family"]
+    if name in tinted:
+        return tinted[name]
     # Deterministic mixing (position-weighted), so "minimax2" and "minimax" do not
     # land on the same fallback slot.
     digest = sum((i + 1) * ord(ch) for i, ch in enumerate(name))
-    return _FAMILY_FALLBACK[digest % len(_FAMILY_FALLBACK)]
+    fallback = PALETTE["family_fallback"]
+    return fallback[digest % len(fallback)]
 
 
 def _shade(color: str, factor: float) -> str:
@@ -245,7 +268,7 @@ def _shade(color: str, factor: float) -> str:
     try:
         parts = [int(color[i : i + 2], 16) for i in (1, 3, 5)]
     except (ValueError, IndexError):
-        return _SHADE_FALLBACK
+        return PALETTE["shade_fallback"]
     return "#" + "".join(f"{max(0, min(255, int(c * factor))):02x}" for c in parts)
 
 
@@ -508,12 +531,12 @@ class ExactProgress(tk.Frame):
 
     def __init__(self, parent: tk.Misc, length: int = 220) -> None:
         super().__init__(
-            parent, width=length, height=8, background=_TRACK,
+            parent, width=length, height=8, background=PALETTE["track"],
             bd=0, highlightthickness=0,
         )
         self._maximum = 1.0
         self._value = 0.0
-        self._fill = tk.Frame(self, background=_ACCENT, bd=0)
+        self._fill = tk.Frame(self, background=PALETTE["accent"], bd=0)
         self.pack_propagate(False)
 
     def _redraw(self) -> None:
@@ -586,7 +609,7 @@ class RelayCheckApp:
         root.title(f"{APP_TITLE} {__version__}")
         root.geometry("980x800")
         root.minsize(840, 660)
-        root.configure(background=_APP_BG)
+        root.configure(background=PALETTE["app_bg"])
         root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._apply_icon()
         self._configure_styles()
@@ -600,13 +623,13 @@ class RelayCheckApp:
         # sizes a pane from its child, so the child has to be in the tree first.
         self.paned = ttk.PanedWindow(root, orient="vertical", style="Relay.TPanedwindow")
         self.paned.pack(fill="both", expand=True)
-        self.top = tk.Frame(self.paned, background=_APP_BG, bd=0)
+        self.top = tk.Frame(self.paned, background=PALETTE["app_bg"], bd=0)
         self.paned.add(self.top, weight=1)
 
         # On a maximised monitor a form stretched over 1900px becomes harder to
         # scan, not more spacious.  Keep the working column readable and centre it;
         # the minimum window still gets a safe 20px gutter.
-        self.content = tk.Frame(self.top, background=_APP_BG, bd=0)
+        self.content = tk.Frame(self.top, background=PALETTE["app_bg"], bd=0)
         self.content.pack(fill="x", padx=20)
         self._content_pad = 20
         self.top.bind("<Configure>", self._on_top_resize)
@@ -639,24 +662,24 @@ class RelayCheckApp:
         leaving the platform integration alone.
         """
         style = ttk.Style(self.root)
-        style.configure("Relay.TPanedwindow", background=_APP_BG)
+        style.configure("Relay.TPanedwindow", background=PALETTE["app_bg"])
         style.configure(
             "Relay.Horizontal.TProgressbar",
-            troughcolor=_TRACK,
-            background=_ACCENT,
-            lightcolor=_ACCENT,
-            darkcolor=_ACCENT,
-            bordercolor=_BORDER,
+            troughcolor=PALETTE["track"],
+            background=PALETTE["accent"],
+            lightcolor=PALETTE["accent"],
+            darkcolor=PALETTE["accent"],
+            bordercolor=PALETTE["border"],
         )
         style.configure(
             "Advanced.TRadiobutton",
-            background=_SURFACE_SUBTLE,
-            foreground=_TEXT,
+            background=PALETTE["surface_subtle"],
+            foreground=PALETTE["text"],
             font=(_FONT, 9),
         )
         style.map(
             "Advanced.TRadiobutton",
-            background=[("active", _SURFACE_SUBTLE)],
+            background=[("active", PALETTE["surface_subtle"])],
         )
 
     def _on_top_resize(self, event: tk.Event) -> None:
@@ -676,11 +699,11 @@ class RelayCheckApp:
     ) -> tk.Button:
         """Create one flat, keyboard-focusable button with a real visual role."""
         palettes = {
-            "primary": (_ACCENT, _ON_ACCENT, _ACCENT_HOVER),
-            "secondary": (_BUTTON_SECONDARY_BG, _TEXT, _BUTTON_SECONDARY_HOVER),
-            "danger": (_DANGER_SOFT, _DANGER, _BUTTON_DANGER_HOVER),
-            "ghost": (_APP_BG, _TEXT_MUTED, _ACCENT_SOFT),
-            "card": (_SURFACE, _TEXT, _ACCENT_SOFT),
+            "primary": (PALETTE["accent"], PALETTE["on_accent"], PALETTE["accent_hover"]),
+            "secondary": (PALETTE["button_secondary_bg"], PALETTE["text"], PALETTE["button_secondary_hover"]),
+            "danger": (PALETTE["danger_soft"], PALETTE["danger"], PALETTE["button_danger_hover"]),
+            "ghost": (PALETTE["app_bg"], PALETTE["text_muted"], PALETTE["accent_soft"]),
+            "card": (PALETTE["surface"], PALETTE["text"], PALETTE["accent_soft"]),
         }
         bg, fg, active = palettes[kind]
         button = tk.Button(
@@ -692,15 +715,15 @@ class RelayCheckApp:
             foreground=fg,
             activebackground=active,
             activeforeground=fg,
-            disabledforeground=_TEXT_FAINT,
+            disabledforeground=PALETTE["text_faint"],
             relief="flat",
             bd=0,
             padx=12 if compact else 18,
             pady=5 if compact else 8,
             cursor="hand2",
             highlightthickness=1 if kind == "card" else 0,
-            highlightbackground=_BORDER,
-            highlightcolor=_ACCENT,
+            highlightbackground=PALETTE["border"],
+            highlightcolor=PALETTE["accent"],
             takefocus=True,
         )
         button._relay_palette = (bg, fg, active)  # type: ignore[attr-defined]
@@ -750,14 +773,14 @@ class RelayCheckApp:
         options: dict[str, Any] = {
             "textvariable": variable,
             "font": (_FONT, 10),
-            "background": _SURFACE_SUBTLE,
-            "foreground": _TEXT,
-            "insertbackground": _TEXT,
+            "background": PALETTE["surface_subtle"],
+            "foreground": PALETTE["text"],
+            "insertbackground": PALETTE["text"],
             "relief": "flat",
             "bd": 0,
             "highlightthickness": 1,
-            "highlightbackground": _BORDER,
-            "highlightcolor": _ACCENT,
+            "highlightbackground": PALETTE["border"],
+            "highlightcolor": PALETTE["accent"],
         }
         if show is not None:
             options["show"] = show
@@ -766,14 +789,14 @@ class RelayCheckApp:
         return tk.Entry(parent, **options)
 
     def _field_heading(self, parent: tk.Misc, title: str, hint: str = "") -> tk.Frame:
-        row = tk.Frame(parent, background=_SURFACE, bd=0)
+        row = tk.Frame(parent, background=PALETTE["surface"], bd=0)
         tk.Label(
-            row, text=title, background=_SURFACE, foreground=_TEXT,
+            row, text=title, background=PALETTE["surface"], foreground=PALETTE["text"],
             font=(_FONT, 9, "bold"),
         ).pack(side="left")
         if hint:
             tk.Label(
-                row, text=hint, background=_SURFACE, foreground=_TEXT_FAINT,
+                row, text=hint, background=PALETTE["surface"], foreground=PALETTE["text_faint"],
                 font=(_FONT, 9),
             ).pack(side="right")
         return row
@@ -788,8 +811,8 @@ class RelayCheckApp:
             )
         else:
             button.configure(
-                state="disabled", background=_BUTTON_DISABLED_BG,
-                foreground=_TEXT_FAINT, cursor="arrow",
+                state="disabled", background=PALETTE["button_disabled_bg"],
+                foreground=PALETTE["text_faint"], cursor="arrow",
             )
 
     def _apply_icon(self) -> None:
@@ -824,55 +847,55 @@ class RelayCheckApp:
     # ------------------------------------------------------------------ widgets
 
     def _build_header(self) -> None:
-        head = tk.Frame(self.content, background=_APP_BG, bd=0)
+        head = tk.Frame(self.content, background=PALETTE["app_bg"], bd=0)
         head.pack(fill="x", pady=(18, 14))
 
-        brand = tk.Frame(head, background=_APP_BG, bd=0)
+        brand = tk.Frame(head, background=PALETTE["app_bg"], bd=0)
         brand.pack(side="left", fill="x", expand=True)
-        title_row = tk.Frame(brand, background=_APP_BG, bd=0)
+        title_row = tk.Frame(brand, background=PALETTE["app_bg"], bd=0)
         title_row.pack(anchor="w")
         tk.Label(
-            title_row, text="relaycheck", background=_APP_BG, foreground=_TEXT,
+            title_row, text="relaycheck", background=PALETTE["app_bg"], foreground=PALETTE["text"],
             font=(_FONT, 18, "bold"),
         ).pack(side="left")
         tk.Label(
-            title_row, text=f"桌面版  {__version__}", background=_ACCENT_SOFT,
-            foreground=_ACCENT, font=(_FONT, 8, "bold"), padx=8, pady=3,
+            title_row, text=f"桌面版  {__version__}", background=PALETTE["accent_soft"],
+            foreground=PALETTE["accent"], font=(_FONT, 8, "bold"), padx=8, pady=3,
         ).pack(side="left", padx=(10, 0), pady=(3, 0))
         tk.Label(
             brand,
             text="用可复现证据检查模型掉包与计费异常",
-            background=_APP_BG, foreground=_TEXT_MUTED, font=(_FONT, 9),
+            background=PALETTE["app_bg"], foreground=PALETTE["text_muted"], font=(_FONT, 9),
         ).pack(anchor="w", pady=(4, 0))
 
-        trust = tk.Frame(head, background=_APP_BG, bd=0)
+        trust = tk.Frame(head, background=PALETTE["app_bg"], bd=0)
         trust.pack(side="right", anchor="e")
         for text in ("只读审计", "Key 不落盘"):
             tk.Label(
-                trust, text=text, background=_SURFACE, foreground=_TEXT_MUTED,
+                trust, text=text, background=PALETTE["surface"], foreground=PALETTE["text_muted"],
                 font=(_FONT, 8, "bold"), padx=10, pady=5,
-                highlightthickness=1, highlightbackground=_BORDER_SOFT,
+                highlightthickness=1, highlightbackground=PALETTE["border_soft"],
             ).pack(side="left", padx=(8, 0))
 
     def _build_form(self) -> None:
         box = tk.Frame(
-            self.content, background=_SURFACE, bd=0,
-            highlightthickness=1, highlightbackground=_BORDER_SOFT,
+            self.content, background=PALETTE["surface"], bd=0,
+            highlightthickness=1, highlightbackground=PALETTE["border_soft"],
         )
         box.pack(fill="x")
 
-        card_head = tk.Frame(box, background=_SURFACE, bd=0)
+        card_head = tk.Frame(box, background=PALETTE["surface"], bd=0)
         card_head.grid(row=0, column=0, sticky="ew", padx=18, pady=(14, 12))
         tk.Label(
-            card_head, text="检测目标", background=_SURFACE, foreground=_TEXT,
+            card_head, text="检测目标", background=PALETTE["surface"], foreground=PALETTE["text"],
             font=(_FONT, 11, "bold"),
         ).pack(side="left")
         tk.Label(
-            card_head, text="支持 OpenAI 兼容接口", background=_SURFACE,
-            foreground=_TEXT_FAINT, font=(_FONT, 9),
+            card_head, text="支持 OpenAI 兼容接口", background=PALETTE["surface"],
+            foreground=PALETTE["text_faint"], font=(_FONT, 9),
         ).pack(side="right")
 
-        body = tk.Frame(box, background=_SURFACE, bd=0)
+        body = tk.Frame(box, background=PALETTE["surface"], bd=0)
         body.grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 16))
         body.columnconfigure(0, weight=1, uniform="field")
         body.columnconfigure(1, weight=1, uniform="field")
@@ -887,20 +910,20 @@ class RelayCheckApp:
         self.timeout_var = tk.StringVar(value="60")
         self.budget_var = tk.StringVar(value="240")
 
-        top_fields = tk.Frame(body, background=_SURFACE, bd=0)
+        top_fields = tk.Frame(body, background=PALETTE["surface"], bd=0)
         top_fields.grid(row=0, column=0, columnspan=2, sticky="ew")
         top_fields.columnconfigure(0, weight=1, uniform="top-field")
         top_fields.columnconfigure(1, weight=1, uniform="top-field")
 
-        url_block = tk.Frame(top_fields, background=_SURFACE, bd=0)
+        url_block = tk.Frame(top_fields, background=PALETTE["surface"], bd=0)
         url_block.grid(row=0, column=0, sticky="ew", padx=(0, 8))
         self._field_heading(url_block, "中转站地址", "例如 https://api.example.com").pack(fill="x")
         self._entry(url_block, self.url_var).pack(fill="x", ipady=7, pady=(6, 0))
 
-        key_block = tk.Frame(top_fields, background=_SURFACE, bd=0)
+        key_block = tk.Frame(top_fields, background=PALETTE["surface"], bd=0)
         key_block.grid(row=0, column=1, sticky="ew", padx=(8, 0))
         self._field_heading(key_block, "API Key", "仅驻留内存").pack(fill="x")
-        key_row = tk.Frame(key_block, background=_SURFACE, bd=0)
+        key_row = tk.Frame(key_block, background=PALETTE["surface"], bd=0)
         key_row.pack(fill="x", pady=(6, 0))
         key_row.columnconfigure(0, weight=1)
         self.key_entry = self._entry(key_row, self.key_var, show="●")
@@ -908,19 +931,19 @@ class RelayCheckApp:
         self.show_key = tk.BooleanVar(value=False)
         tk.Checkbutton(
             key_row, text="显示", variable=self.show_key, command=self._toggle_key,
-            background=_SURFACE, activebackground=_SURFACE, foreground=_TEXT_MUTED,
-            selectcolor=_SURFACE, font=(_FONT, 9), bd=0, highlightthickness=0,
+            background=PALETTE["surface"], activebackground=PALETTE["surface"], foreground=PALETTE["text_muted"],
+            selectcolor=PALETTE["surface"], font=(_FONT, 9), bd=0, highlightthickness=0,
         ).grid(row=0, column=1, padx=(10, 0))
 
-        bottom_fields = tk.Frame(body, background=_SURFACE, bd=0)
+        bottom_fields = tk.Frame(body, background=PALETTE["surface"], bd=0)
         bottom_fields.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(14, 0))
         bottom_fields.columnconfigure(0, weight=4)
         bottom_fields.columnconfigure(1, weight=6)
 
-        model_block = tk.Frame(bottom_fields, background=_SURFACE, bd=0)
+        model_block = tk.Frame(bottom_fields, background=PALETTE["surface"], bd=0)
         model_block.grid(row=0, column=0, sticky="ew", padx=(0, 8))
         self._field_heading(model_block, "模型（可选）", "留空将自动挑选").pack(fill="x")
-        models_row = tk.Frame(model_block, background=_SURFACE, bd=0)
+        models_row = tk.Frame(model_block, background=PALETTE["surface"], bd=0)
         models_row.pack(fill="x", pady=(6, 0))
         models_row.columnconfigure(0, weight=1)
         self._entry(models_row, self.models_var).grid(row=0, column=0, sticky="ew", ipady=7)
@@ -929,10 +952,10 @@ class RelayCheckApp:
         )
         self.fetch_btn.grid(row=0, column=1, padx=(8, 0), sticky="ns")
 
-        out_block = tk.Frame(bottom_fields, background=_SURFACE, bd=0)
+        out_block = tk.Frame(bottom_fields, background=PALETTE["surface"], bd=0)
         out_block.grid(row=0, column=1, sticky="ew", padx=(8, 0))
         self._field_heading(out_block, "报告输出目录", "完成后可直接打开").pack(fill="x")
-        out_row = tk.Frame(out_block, background=_SURFACE, bd=0)
+        out_row = tk.Frame(out_block, background=PALETTE["surface"], bd=0)
         out_row.pack(fill="x", pady=(6, 0))
         out_row.columnconfigure(0, weight=1)
         self._entry(out_row, self.outdir_var).grid(row=0, column=0, sticky="ew", ipady=7)
@@ -940,7 +963,7 @@ class RelayCheckApp:
             out_row, "浏览…", self._pick_outdir, kind="secondary", compact=True
         ).grid(row=0, column=1, padx=(8, 0), sticky="ns")
 
-        self.model_list_frame = tk.Frame(body, background=_SURFACE, bd=0)
+        self.model_list_frame = tk.Frame(body, background=PALETTE["surface"], bd=0)
         self.model_list_frame.grid(
             row=2, column=0, columnspan=2, sticky="ew", pady=(12, 0)
         )
@@ -948,10 +971,10 @@ class RelayCheckApp:
         self.model_list = tk.Listbox(
             self.model_list_frame,
             selectmode="extended", height=5, exportselection=False,
-            background=_SURFACE_SUBTLE, foreground=_TEXT,
-            selectbackground=_ACCENT_SOFT, selectforeground=_ACCENT,
+            background=PALETTE["surface_subtle"], foreground=PALETTE["text"],
+            selectbackground=PALETTE["accent_soft"], selectforeground=PALETTE["accent"],
             font=(_FONT, 9), relief="flat", bd=0,
-            highlightthickness=1, highlightbackground=_BORDER,
+            highlightthickness=1, highlightbackground=PALETTE["border"],
         )
         self.model_list.grid(row=0, column=0, sticky="ew")
         self.model_list_scroll = ttk.Scrollbar(
@@ -975,16 +998,16 @@ class RelayCheckApp:
         )
 
         self.adv_panel = tk.Frame(
-            body, background=_SURFACE_SUBTLE, bd=0,
-            highlightthickness=1, highlightbackground=_BORDER_SOFT,
+            body, background=PALETTE["surface_subtle"], bd=0,
+            highlightthickness=1, highlightbackground=PALETTE["border_soft"],
         )
         self.adv_panel.grid(
             row=5, column=0, columnspan=2, sticky="ew", pady=(8, 0)
         )
 
         tk.Label(
-            self.adv_panel, text="检测强度", background=_SURFACE_SUBTLE,
-            foreground=_TEXT, font=(_FONT, 9, "bold"),
+            self.adv_panel, text="检测强度", background=PALETTE["surface_subtle"],
+            foreground=PALETTE["text"], font=(_FONT, 9, "bold"),
         ).grid(row=0, column=0, sticky="w", padx=(12, 10), pady=(10, 0))
         ttk.Radiobutton(
             self.adv_panel, text="标准（默认 8 项探针）", value="default",
@@ -1004,34 +1027,34 @@ class RelayCheckApp:
                 "多出来的三项里，长输入完整性每次要发上万 token —— 一次就可能比其余 10 项"
                 "加起来还贵，所以默认不跑。"
             ),
-            background=_SURFACE_SUBTLE, foreground=_TEXT_MUTED,
+            background=PALETTE["surface_subtle"], foreground=PALETTE["text_muted"],
             font=(_FONT, 9), wraplength=880, justify="left",
         ).grid(row=1, column=0, columnspan=3, sticky="w", padx=12, pady=(6, 0))
 
-        nums = tk.Frame(self.adv_panel, background=_SURFACE_SUBTLE, bd=0)
+        nums = tk.Frame(self.adv_panel, background=PALETTE["surface_subtle"], bd=0)
         nums.grid(row=2, column=0, columnspan=3, sticky="w", padx=12, pady=(10, 12))
         tk.Label(
-            nums, text="最多测几个模型", background=_SURFACE_SUBTLE,
-            foreground=_TEXT, font=(_FONT, 9),
+            nums, text="最多测几个模型", background=PALETTE["surface_subtle"],
+            foreground=PALETTE["text"], font=(_FONT, 9),
         ).pack(side="left")
         ttk.Spinbox(nums, from_=1, to=20, width=4, textvariable=self.maxmodels_var).pack(
             side="left", padx=(6, 16)
         )
         tk.Label(
-            nums, text="单次请求超时（秒）", background=_SURFACE_SUBTLE,
-            foreground=_TEXT, font=(_FONT, 9),
+            nums, text="单次请求超时（秒）", background=PALETTE["surface_subtle"],
+            foreground=PALETTE["text"], font=(_FONT, 9),
         ).pack(side="left")
         self._entry(nums, self.timeout_var, width=5).pack(side="left", padx=(6, 16), ipady=3)
         tk.Label(
-            nums, text="每项探针预算（秒）", background=_SURFACE_SUBTLE,
-            foreground=_TEXT, font=(_FONT, 9),
+            nums, text="每项探针预算（秒）", background=PALETTE["surface_subtle"],
+            foreground=PALETTE["text"], font=(_FONT, 9),
         ).pack(side="left")
         self._entry(nums, self.budget_var, width=6).pack(side="left", padx=(6, 0), ipady=3)
 
         self.adv_panel.grid_remove()
 
     def _build_controls(self) -> None:
-        bar = tk.Frame(self.content, background=_APP_BG, bd=0)
+        bar = tk.Frame(self.content, background=PALETTE["app_bg"], bd=0)
         bar.pack(fill="x", pady=(12, 0))
 
         self.start_btn = self._button(bar, "开始检测", self._start, kind="primary")
@@ -1043,18 +1066,18 @@ class RelayCheckApp:
 
         self.status_var = tk.StringVar(value="空闲")
         state = tk.Frame(
-            bar, background=_SURFACE, bd=0, padx=10, pady=8,
-            highlightthickness=1, highlightbackground=_BORDER_SOFT,
+            bar, background=PALETTE["surface"], bd=0, padx=10, pady=8,
+            highlightthickness=1, highlightbackground=PALETTE["border_soft"],
         )
         state.pack(side="right", anchor="e")
         self.status_dot = tk.Label(
-            state, text="●", background=_SURFACE, foreground=_TEXT_FAINT,
+            state, text="●", background=PALETTE["surface"], foreground=PALETTE["text_faint"],
             font=(_FONT, 8),
         )
         self.status_dot.pack(side="left", padx=(0, 7))
         tk.Label(
-            state, textvariable=self.status_var, background=_SURFACE,
-            foreground=_TEXT_MUTED, font=(_FONT, 9),
+            state, textvariable=self.status_var, background=PALETTE["surface"],
+            foreground=PALETTE["text_muted"], font=(_FONT, 9),
         ).pack(side="left", padx=(0, 12))
 
         # Progress. Until this existed the only sign of life during a four-minute
@@ -1067,13 +1090,13 @@ class RelayCheckApp:
         # and the same weight as everything else, so the one line on screen that
         # costs money was also the easiest to ignore. It gets its own row directly
         # under the button it warns about, in bold.
-        warn = tk.Frame(self.content, background=_APP_BG, bd=0)
+        warn = tk.Frame(self.content, background=PALETTE["app_bg"], bd=0)
         warn.pack(fill="x", pady=(8, 4))
         tk.Label(
             warn,
             text="⚠  检测会消耗你自己的 API 额度（一般几十到上百次请求）。",
-            background=_APP_BG,
-            foreground=_SPEND_WARN,
+            background=PALETTE["app_bg"],
+            foreground=PALETTE["spend_warn"],
             font=(_FONT, 9, "bold"),
         ).pack(anchor="w")
 
@@ -1084,33 +1107,33 @@ class RelayCheckApp:
         ignore ``background``, so on a tinted card (``#fee2e2`` and friends) it
         keeps the theme's grey and reads as a stray line from another window.
         """
-        rule = tk.Frame(parent, height=1, bd=0, background=_RULE)
+        rule = tk.Frame(parent, height=1, bd=0, background=PALETTE["rule"])
         rule.pack(fill="x", padx=(20, 16), pady=0)
         return rule
 
     def _build_verdict(self) -> None:
         self.card = tk.Frame(
-            self.content, bd=0, relief="flat", background=_SURFACE,
-            highlightthickness=1, highlightbackground=_BORDER_SOFT,
+            self.content, bd=0, relief="flat", background=PALETTE["surface"],
+            highlightthickness=1, highlightbackground=PALETTE["border_soft"],
         )
         self.card.pack(fill="x", pady=(6, 0))
         # A narrow status rail gives the eye a target without turning the entire
         # card into a loud verdict banner.  ``place`` keeps the rail outside the
         # pack order that the result-section tests deliberately assert on.
-        self.card_accent = tk.Frame(self.card, width=4, background=_BORDER)
+        self.card_accent = tk.Frame(self.card, width=4, background=PALETTE["border"])
         self.card_accent.place(x=0, y=0, relheight=1)
 
         # ---- 结论
-        self.card_header = tk.Frame(self.card, background=_SURFACE, bd=0)
+        self.card_header = tk.Frame(self.card, background=PALETTE["surface"], bd=0)
         self.card_header.pack(fill="x")
         self.verdict_label = tk.Label(
             self.card_header, text="等待开始", font=(_FONT, 14, "bold"),
-            foreground=_TEXT, background=_SURFACE, anchor="w", justify="left",
+            foreground=PALETTE["text"], background=PALETTE["surface"], anchor="w", justify="left",
         )
         self.verdict_label.pack(fill="x", padx=(20, 16), pady=(14, 3))
         self.verdict_detail = tk.Label(
             self.card_header, text="填写目标并开始检测，结论与证据会出现在这里。",
-            background=_SURFACE, foreground=_TEXT_MUTED, anchor="w", justify="left",
+            background=PALETTE["surface"], foreground=PALETTE["text_muted"], anchor="w", justify="left",
             font=(_FONT, 9),
             wraplength=900,
         )
@@ -1119,33 +1142,33 @@ class RelayCheckApp:
         # ---- 问题数量
         # Each section carries its own leading rule, so hiding a section hides its
         # rule with it instead of leaving two rules stacked with nothing between.
-        self.chips_section = tk.Frame(self.card, background=_SURFACE)
+        self.chips_section = tk.Frame(self.card, background=PALETTE["surface"])
         self.chips_section.pack(fill="x")
         self.chips_rule = self._add_rule(self.chips_section)
         tk.Label(
-            self.chips_section, text="问题数量", background=_SURFACE, anchor="w",
-            font=(_FONT, 9, "bold"), foreground=_TEXT_MUTED,
+            self.chips_section, text="问题数量", background=PALETTE["surface"], anchor="w",
+            font=(_FONT, 9, "bold"), foreground=PALETTE["text_muted"],
         ).pack(fill="x", padx=(20, 16), pady=(10, 5))
-        chips_holder = tk.Frame(self.chips_section, background=_SURFACE)
+        chips_holder = tk.Frame(self.chips_section, background=PALETTE["surface"])
         chips_holder.pack(anchor="w", padx=(20, 16), pady=(0, 10))
         self.chips: dict[str, tk.Label] = {}
         for key, tag in _SEVERITY_CHIPS:
             chip = tk.Label(
                 chips_holder, text=f"{tag} 0", font=(_MONO_FONT, 9, "bold"), bd=0,
-                padx=8, pady=2, background=_SURFACE, foreground=_SEVERITY_EMPTY_FG,
+                padx=8, pady=2, background=PALETTE["surface"], foreground=PALETTE["severity_empty_fg"],
             )
             chip.pack(side="left", padx=(0, 5))
             self.chips[key] = chip
 
         # ---- 家族线索
-        self.family_section = tk.Frame(self.card, background=_SURFACE)
+        self.family_section = tk.Frame(self.card, background=PALETTE["surface"])
         self.family_section.pack(fill="x")
         self.family_rule = self._add_rule(self.family_section)
         self.family_caption = tk.Label(
             self.family_section,
             text="家族线索：每个模型自己供出的身份（只是线索，单独一条不足以定性）",
-            background=_SURFACE, anchor="w", justify="left", wraplength=900,
-            font=(_FONT, 9, "bold"), foreground=_TEXT_MUTED,
+            background=PALETTE["surface"], anchor="w", justify="left", wraplength=900,
+            font=(_FONT, 9, "bold"), foreground=PALETTE["text_muted"],
         )
         self.family_caption.pack(fill="x", padx=(20, 16), pady=(10, 5))
         # The per-model self-reports. Deliberately part of the card and not of the
@@ -1158,7 +1181,7 @@ class RelayCheckApp:
         # quote is the evidence, and people paste evidence.
         self.family_text = tk.Text(
             self.family_section, height=1, font=(_MONO_FONT, 9), bd=0,
-            highlightthickness=0, background=_SURFACE, foreground=_TEXT,
+            highlightthickness=0, background=PALETTE["surface"], foreground=PALETTE["text"],
             wrap="char", cursor="arrow", takefocus=0,
         )
         self.family_text.pack(fill="x", padx=(20, 16), pady=(0, 12))
@@ -1169,10 +1192,10 @@ class RelayCheckApp:
         # wants to send to the vendor, and the moment they want it is the moment
         # they are reading it. The toolbar button stays as the way to reach the
         # folder before any run has produced one.
-        self.action_section = tk.Frame(self.card, background=_SURFACE)
+        self.action_section = tk.Frame(self.card, background=PALETTE["surface"])
         self.action_section.pack(fill="x")
         self.action_rule = self._add_rule(self.action_section)
-        actions = tk.Frame(self.action_section, background=_SURFACE)
+        actions = tk.Frame(self.action_section, background=PALETTE["surface"])
         actions.pack(anchor="w", padx=(20, 16), pady=(10, 14))
         self.copy_btn = self._button(
             actions, "复制结论", self._copy_card, kind="card", compact=True
@@ -1183,7 +1206,7 @@ class RelayCheckApp:
         )
         self.card_open_btn.pack(side="left", padx=(8, 0))
         self.copy_hint = tk.Label(
-            actions, text="", background=_SURFACE, foreground=_TEXT_MUTED,
+            actions, text="", background=PALETTE["surface"], foreground=PALETTE["text_muted"],
             font=(_FONT, 9),
         )
         self.copy_hint.pack(side="left", padx=(10, 0))
@@ -1220,33 +1243,33 @@ class RelayCheckApp:
         # from ``pack`` live in a plain frame that is itself the pane. No top margin
         # on that frame: the hairline below has to land on the divider, and the log
         # frame brings its own gap.
-        outer = tk.Frame(self.paned, background=_APP_BG, bd=0)
+        outer = tk.Frame(self.paned, background=PALETTE["app_bg"], bd=0)
         self.paned.add(outer, weight=3)
         # Under this theme the sash is painted in the same colour as everything
         # around it, so an untouched divider is invisible and nobody finds out the
         # log can be pulled taller. This is the entire affordance.
-        self.sash_hint = tk.Frame(outer, height=3, background=_SASH_HINT)
+        self.sash_hint = tk.Frame(outer, height=3, background=PALETTE["sash_hint"])
         self.sash_hint.pack(fill="x", padx=20)
         self.log_wrap = tk.Frame(
-            outer, background=_LOG_BG, bd=0,
-            highlightthickness=1, highlightbackground=_LOG_BORDER,
+            outer, background=PALETTE["log_bg"], bd=0,
+            highlightthickness=1, highlightbackground=PALETTE["log_border"],
         )
         self.log_wrap.pack(fill="both", expand=True, padx=20, pady=(10, 16))
-        log_head = tk.Frame(self.log_wrap, background=_LOG_HEAD_BG, bd=0)
+        log_head = tk.Frame(self.log_wrap, background=PALETTE["log_head_bg"], bd=0)
         log_head.pack(fill="x", padx=12, pady=(9, 7))
         tk.Label(
-            log_head, text="运行详情", background=_LOG_HEAD_BG, foreground=_LOG_HEAD_FG,
+            log_head, text="运行详情", background=PALETTE["log_head_bg"], foreground=PALETTE["log_head_fg"],
             font=(_FONT, 9, "bold"),
         ).pack(side="left")
         tk.Label(
-            log_head, text="拖动上方分隔线可调整高度", background=_LOG_HEAD_BG,
-            foreground=_LOG_HINT_FG, font=(_FONT, 8),
+            log_head, text="拖动上方分隔线可调整高度", background=PALETTE["log_head_bg"],
+            foreground=PALETTE["log_hint_fg"], font=(_FONT, 8),
         ).pack(side="right")
         self.log = ScrolledText(
             self.log_wrap, wrap="word", height=9, font=(_MONO_FONT, 9),
-            state="disabled", background=_LOG_TEXT_BG, foreground=_LOG_TEXT_FG,
-            insertbackground=_LOG_CARET, selectbackground=_LOG_SELECT_BG,
-            selectforeground=_LOG_SELECT_FG, relief="flat", bd=0,
+            state="disabled", background=PALETTE["log_text_bg"], foreground=PALETTE["log_text_fg"],
+            insertbackground=PALETTE["log_caret"], selectbackground=PALETTE["log_select_bg"],
+            selectforeground=PALETTE["log_select_fg"], relief="flat", bd=0,
             highlightthickness=0, padx=10, pady=8,
         )
         self.log.pack(fill="both", expand=True, padx=10, pady=(0, 10))
@@ -1356,7 +1379,7 @@ class RelayCheckApp:
         for widget in (self.start_btn, self.fetch_btn):
             self._set_button_enabled(widget, not running)
         self._set_button_enabled(self.stop_btn, running)
-        self.status_dot.configure(foreground=_ACCENT if running else _TEXT_FAINT)
+        self.status_dot.configure(foreground=PALETTE["accent"] if running else PALETTE["text_faint"])
         # Both open buttons follow the same rule: there is exactly one report
         # directory, so two buttons disagreeing about whether it exists is a bug.
         can_open = bool(self.last_out_dir and self.last_out_dir.is_dir())
@@ -1414,13 +1437,13 @@ class RelayCheckApp:
             for child in widget.winfo_children():
                 paint(child, colour)
 
-        self.card.configure(background=_SURFACE)
+        self.card.configure(background=PALETTE["surface"])
         paint(self.card_header, bg)
         for section in (self.chips_section, self.family_section, self.action_section):
-            paint(section, _SURFACE)
+            paint(section, PALETTE["surface"])
         self.card.configure(highlightbackground=_shade(bg, 0.88))
         for rule in (self.chips_rule, self.family_rule, self.action_rule):
-            rule.configure(background=_BORDER_SOFT)
+            rule.configure(background=PALETTE["border_soft"])
 
     def _fill_family(self, rows: Sequence[tuple[str, str, str]]) -> None:
         """Render the family block, tinting each self-reported vendor.
@@ -1537,11 +1560,11 @@ class RelayCheckApp:
         family_rows: Sequence[tuple[str, str, str]] | None = None,
         actions: bool = False,
     ) -> None:
-        fg, bg, _ = VERDICT_STYLE.get(verdict, _VERDICT_FALLBACK)
+        fg, bg, _ = verdict_style(verdict)
         self._tint(bg)
         self.card_accent.configure(background=fg)
         self.verdict_label.configure(text=verdict, foreground=fg)
-        self.verdict_detail.configure(text=detail, foreground=_TEXT)
+        self.verdict_detail.configure(text=detail, foreground=PALETTE["text"])
 
         # A chip is filled only when its count is non-zero: a solid red
         # ``CRITICAL 0`` on a run that found nothing reads as an alarm, which is
@@ -1549,11 +1572,11 @@ class RelayCheckApp:
         # means "this did not".
         for key, tag in _SEVERITY_CHIPS:
             count = (counts or {}).get(key, 0)
-            fill_bg, fill_fg = _SEVERITY_FILL.get(key, _SEVERITY_FILL["info"])
+            fill_bg, fill_fg = severity_fill(key)
             self.chips[key].configure(
                 text=f"{tag} {count}",
-                background=fill_bg if count > 0 else _SURFACE,
-                foreground=fill_fg if count > 0 else _SEVERITY_EMPTY_FG,
+                background=fill_bg if count > 0 else PALETTE["surface"],
+                foreground=fill_fg if count > 0 else PALETTE["severity_empty_fg"],
             )
 
         rows = list(family_rows or ())
@@ -1592,7 +1615,7 @@ class RelayCheckApp:
             messagebox.showwarning(APP_TITLE, "先把中转站地址和 API Key 填上。")
             return
         self._set_button_enabled(self.fetch_btn, False)
-        self.status_dot.configure(foreground=_ACCENT)
+        self.status_dot.configure(foreground=PALETTE["accent"])
         self.status_var.set("正在获取模型列表…")
 
         def work() -> None:
@@ -1607,7 +1630,7 @@ class RelayCheckApp:
 
     def _models_fetched(self, names: list[str], error: str | None) -> None:
         self._set_button_enabled(self.fetch_btn, True)
-        self.status_dot.configure(foreground=_TEXT_FAINT)
+        self.status_dot.configure(foreground=PALETTE["text_faint"])
         self.status_var.set("空闲")
         if error:
             self._log(f"获取模型列表失败：{error}")
@@ -1734,7 +1757,7 @@ class RelayCheckApp:
                     self._log(f"报告读不出来：{exc}")
 
         if report is None:
-            fg, bg, detail = _FAIL_STYLE
+            fg, bg, detail = fail_style()
             if code in (0, 1):
                 # Exit 0/1 mean the audit ran; no report.json means it was killed
                 # before writing. Saying "运行失败" without that nuance would hide
@@ -1749,7 +1772,7 @@ class RelayCheckApp:
 
         verdict = str(report.get("verdict") or "运行结束")
         counts = report.get("severity_counts") or {}
-        _, _, plain = VERDICT_STYLE.get(verdict, ("", "", "见报告。"))
+        plain = verdict_text(verdict)
         findings = report.get("findings") or []
         top = _top_finding_line(findings)
         self._show_card(verdict, plain + top, counts, _family_rows(report), actions=True)

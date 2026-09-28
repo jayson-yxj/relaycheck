@@ -304,10 +304,10 @@ def test_verdict_table_covers_every_verdict_the_reporter_can_return() -> None:
     returned = set(re.findall(r'return "(检测到[^"]*|未检测到[^"]*)"', source))
     assert len(returned) >= 4, f"could not read the verdicts out of the reporter: {returned}"
 
-    missing = returned - set(G.VERDICT_STYLE)
+    missing = returned - set(G._VERDICT_TEXT)
     assert not missing, f"the GUI has no styling for: {sorted(missing)}"
     for verdict in returned:
-        fg, bg, plain = G.VERDICT_STYLE[verdict]
+        fg, bg, plain = G.verdict_style(verdict)
         assert fg.startswith("#") and bg.startswith("#"), (verdict, fg, bg)
         assert len(plain) > 10, (verdict, plain)
 
@@ -322,7 +322,7 @@ def test_the_clean_verdict_keeps_its_caveat() -> None:
     if not _need_gui():
         return
 
-    _, _, plain = G.VERDICT_STYLE["未检测到问题"]
+    _, _, plain = G.verdict_style("未检测到问题")
     assert "不等于" in plain, plain
     assert "家族" in plain, plain
 
@@ -332,7 +332,7 @@ def test_the_failure_card_does_not_imply_a_verdict() -> None:
     if not _need_gui():
         return
 
-    _, _, plain = G._FAIL_STYLE
+    _, _, plain = G.fail_style()
     assert "不代表中转站有问题" in plain, plain
     assert "也不代表没问题" in plain, plain
 
@@ -617,22 +617,22 @@ def test_a_severity_chip_is_only_filled_when_it_actually_happened() -> None:
     try:
         app = G.RelayCheckApp(root)
         app._show_card("未检测到问题", "说明", {"info": 2, "clean": 7})
-        card_bg = G.VERDICT_STYLE["未检测到问题"][1]
+        card_bg = G.verdict_style("未检测到问题")[1]
 
         # Semantic colour belongs to the conclusion, not to every piece of
         # evidence underneath it. A full green card reads like a certificate of
         # innocence, which this family-level audit explicitly cannot issue.
         assert str(app.card_header["background"]) == card_bg
-        assert str(app.card["background"]) == G._SURFACE
+        assert str(app.card["background"]) == G.PALETTE["surface"]
 
         for key in ("critical", "high", "medium", "low"):
             chip = app.chips[key]
-            assert str(chip["background"]) == G._SURFACE, f"{key} 计数为 0，不该上色"
-            assert str(chip["foreground"]) == G._SEVERITY_EMPTY_FG, key
+            assert str(chip["background"]) == G.PALETTE["surface"], f"{key} 计数为 0，不该上色"
+            assert str(chip["foreground"]) == G.PALETTE["severity_empty_fg"], key
             assert chip["text"].endswith(" 0"), chip["text"]
         for key in ("info", "clean"):
             chip = app.chips[key]
-            fill_bg, fill_fg = G._SEVERITY_FILL[key]
+            fill_bg, fill_fg = G.severity_fill(key)
             assert str(chip["background"]) == fill_bg, key
             assert str(chip["foreground"]) == fill_fg, key
             assert str(chip["background"]) != card_bg, key
@@ -640,7 +640,7 @@ def test_a_severity_chip_is_only_filled_when_it_actually_happened() -> None:
 
         # Evidence sections are neutral, so their dividers use the neutral border
         # rather than extending the verdict tint through the entire card.
-        assert str(app.chips_rule["background"]) == G._BORDER_SOFT
+        assert str(app.chips_rule["background"]) == G.PALETTE["border_soft"]
         assert str(app.chips_rule["background"]) != card_bg
     finally:
         root.update_idletasks()
@@ -703,12 +703,12 @@ def test_a_vendors_colour_is_the_same_on_every_run() -> None:
     assert G.family_color("   ") is None
 
     unknown = G.family_color("some-vendor-from-2030")
-    assert unknown in G._FAMILY_FALLBACK, unknown
+    assert unknown in G.PALETTE["family_fallback"], unknown
     assert unknown == G.family_color("some-vendor-from-2030")
     # Two different unknown vendors should not collapse onto one slot every time.
     spread = {G.family_color(f"vendor-{i}") for i in range(12)}
     assert len(spread) > 1, "未知厂商全都撞到同一个颜色"
-    assert all(colour in G._FAMILY_FALLBACK for colour in spread)
+    assert all(colour in G.PALETTE["family_fallback"] for colour in spread)
 
 
 def test_window_builds_with_the_expected_initial_state() -> None:
@@ -1208,9 +1208,9 @@ def test_the_log_pane_is_draggable_and_says_so() -> None:
         app = G.RelayCheckApp(root)
         assert len(app.paned.panes()) == 2, app.paned.panes()
         assert app.sash_hint.winfo_manager() == "pack", "分隔线没显示，日志可拖这件事就没人知道"
-        assert str(app.sash_hint["background"]) == G._SASH_HINT, app.sash_hint["background"]
+        assert str(app.sash_hint["background"]) == G.PALETTE["sash_hint"], app.sash_hint["background"]
         assert app.sash_hint.master is app.log_wrap.master, "分隔线得跟日志在同一格里"
-        assert G._SASH_HINT != "#f0f0f0", "这跟主题底色一样，等于没画"
+        assert G.PALETTE["sash_hint"] != "#f0f0f0", "这跟主题底色一样，等于没画"
     finally:
         root.update_idletasks()
 
