@@ -123,48 +123,50 @@ _ADV_CLOSED = "›  高级选项（通常无需调整）"
 _ADV_OPEN = "⌄  高级选项（通常无需调整）"
 
 LIGHT: dict[str, Any] = {
-    # 画布与分层
-    "app_bg": "#f4f6fb",
+    # 画布与分层。画布是浅灰泛一点粉，跟深色那边「黑泛着暗红」是同一个做法 ——
+    # 两个主题的差别不是「亮和暗」，是灰粉配红黑。渐变 #fdfafa -> #f7f2f4 ->
+    # #f0e9ec 由第四刀按 y 采样画上去；app_bg 是它的中段，也是渐变失效时的兜底。
+    "app_bg": "#f7f2f4",
     "surface": "#ffffff",
-    "surface_subtle": "#f8fafc",
-    "border": "#d0d5dd",
-    "border_soft": "#e4e7ec",
-    "rule": "#dddddd",
-    "track": "#eaecf0",
-    "sash_hint": "#c7cdd8",
-    "shade_fallback": "#dddddd",
-    #: 进度条填充。装完这套角色之后它拿的就是原来 ``accent`` 的靛蓝值，一个字节
-    #: 都没变 —— 第五刀把浅色 accent 换成品牌红的时候，进度条不会跟着红。
-    "progress_fill": "#4f46e5",
-    # 文字。text_faint 在白底上只有 2.58:1 —— 它只用在「这一栏这次没测」这种
-    # 明确次要的说明上，不承载任何结论。
-    "text": "#101828",
-    "text_muted": "#667085",
-    "text_faint": "#98a2b3",
-    # 品牌与语义。绿留给 CLEAN，绝不在这里出现。
-    "accent": "#4f46e5",
-    "accent_hover": "#4338ca",
-    "accent_soft": "#eef2ff",
+    "surface_subtle": "#fbf7f8",
+    "border": "#e0d0d5",
+    "border_soft": "#eee3e6",
+    "rule": "#e6d8dc",
+    "track": "#ece0e4",
+    "sash_hint": "#d4c2c8",
+    "shade_fallback": "#f0e6e9",
+    #: 进度条填充。浅色下也是一个中性色，不跟着品牌走 —— 理由写在 DARK 那一份里。
+    "progress_fill": "#60575b",
+    # 文字。暖的近黑，不是纯黑：纯黑压在粉调画布上会发蓝，整页就散了。
+    "text": "#241d1f",
+    "text_muted": "#605759",
+    "text_faint": "#736a6d",
+    # 品牌与语义。品牌是粉，只出现在图标 / 焦点环 / 主按钮 / 徽章上；红照样留给
+    # danger，绿照样留给 CLEAN。粉在卡片上 5.87:1、在画布上 5.30:1。
+    "accent": "#c2185b",
+    "accent_hover": "#a3144e",
+    "accent_soft": "#fce4ec",
     "on_accent": "#ffffff",
     "danger": "#b42318",
     "danger_soft": "#fef3f2",
     "spend_warn": "#a1541a",
     "severity_empty_fg": "#78716c",
     # 按钮
-    "button_secondary_bg": "#f2f4f7",
-    "button_secondary_hover": "#e4e7ec",
+    "button_secondary_bg": "#f7eef1",
+    "button_secondary_hover": "#f0e2e7",
     "button_danger_hover": "#fee4e2",
-    "button_disabled_bg": "#eaecf0",
-    # 日志面板。浅色下它是压在浅色页面上的黑板，是下半屏的视觉锚点。
-    "log_bg": "#101828",
-    "log_border": "#344054",
-    "log_head_bg": "#101828",
-    "log_head_fg": "#f2f4f7",
-    "log_hint_fg": "#667085",
-    "log_text_bg": "#0b1220",
-    "log_text_fg": "#d0d5dd",
+    "button_disabled_bg": "#efe7e9",
+    # 日志面板。这一块故意不跟品牌走：它是压在浅灰页面上的暖黑板，是下半屏的视觉
+    # 锚点，也是「往里看的窗口」。原来的蓝黑 #101828 会让整页发蓝，换成暖黑。
+    "log_bg": "#1c1618",
+    "log_border": "#3d3134",
+    "log_head_bg": "#1c1618",
+    "log_head_fg": "#f7f2f4",
+    "log_hint_fg": "#a3969a",
+    "log_text_bg": "#151011",
+    "log_text_fg": "#ded5d7",
     "log_caret": "#ffffff",
-    "log_select_bg": "#344054",
+    "log_select_bg": "#3d3134",
     "log_select_fg": "#ffffff",
     # 结论卡片：``(前景, 背景)``，与 ``_VERDICT_TEXT`` 同一批 key。
     "verdict": {
@@ -175,7 +177,7 @@ LIGHT: dict[str, Any] = {
         "未检测到问题": ("#14532d", "#dcfce7"),
     },
     #: 认不出来的 verdict 走中性卡片，而不是让窗口在一次三分钟的检测之后崩掉。
-    "verdict_fallback": ("#344054", "#f2f4f7"),
+    "verdict_fallback": ("#4a3f42", "#f7eef1"),
     "fail": ("#7f1d1d", "#fee2e2"),
     #: 白字填充块，两个主题共用（见文件头第 1 条规则）。一个读数是零的胶囊故意
     #: 不填色：``CRITICAL=0`` 配一块实心红是警报，而干净的一跑里它正好说反了。
