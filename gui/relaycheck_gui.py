@@ -77,6 +77,10 @@ _CHROME_ROLES = (
     "border", "border_soft", "accent", "accent_hover", "accent_soft", "on_accent",
     "danger", "danger_soft", "button_secondary_bg", "button_secondary_hover",
     "button_danger_hover", "button_disabled_bg", "track", "rule",
+    #: 进度条的填充。它是唯一一个「只表示在动」的填充色，所以既不能借用任何语义
+    #: 色，也不能跟着强调色走 —— 强调色在本项目里是红，而一条红进度条会被读成
+    #: 「出错了」。两个主题都给它一个中性到发亮的值。
+    "progress_fill",
     "shade_fallback", "spend_warn", "log_bg", "log_border", "log_head_bg",
     "log_head_fg", "log_hint_fg", "log_text_bg", "log_text_fg", "log_caret",
     "log_select_bg", "log_select_fg", "sash_hint", "severity_empty_fg",
@@ -129,6 +133,9 @@ LIGHT: dict[str, Any] = {
     "track": "#eaecf0",
     "sash_hint": "#c7cdd8",
     "shade_fallback": "#dddddd",
+    #: 进度条填充。装完这套角色之后它拿的就是原来 ``accent`` 的靛蓝值，一个字节
+    #: 都没变 —— 第五刀把浅色 accent 换成品牌红的时候，进度条不会跟着红。
+    "progress_fill": "#4f46e5",
     # 文字。text_faint 在白底上只有 2.58:1 —— 它只用在「这一栏这次没测」这种
     # 明确次要的说明上，不承载任何结论。
     "text": "#101828",
@@ -205,11 +212,111 @@ LIGHT: dict[str, Any] = {
     "family_fallback": ("#0f766e", "#1d4ed8", "#be123c", "#a16207", "#7c3aed", "#0e7490"),
 }
 
-THEMES: dict[str, dict[str, Any]] = {"light": LIGHT}
+DARK: dict[str, Any] = {
+    # 画布与分层。画布本身还叠着一层极缓的暗深红渐变（#2a1418 -> #190f12 ->
+    # #0d0809），这里的 app_bg 是它的中段，也是渐变失效时的单色兜底 —— 所以
+    # 即使渐变没画上，暗色主题也还是完整的。
+    "app_bg": "#190f12",
+    "surface": "#1e1619",
+    "surface_subtle": "#261c1f",
+    "border": "#463538",
+    "border_soft": "#332729",
+    "rule": "#332729",
+    "track": "#332729",
+    "sash_hint": "#463538",
+    #: 只在 `_shade()` 拿到一个解析不了的颜色时才用得上，正常路径走不到。
+    "shade_fallback": "#332729",
+    #: 进度条填充。深色下它不跟着 accent 变红，而是一个偏暖的亮中性色：对进度槽
+    #: ``#332729`` 是 5.61:1，跟浅色那根靛蓝条对它的槽 5.90:1 基本对齐。
+    "progress_fill": "#ab9fa1",
+    # 文字。深色下 text_faint 反而达标了 —— 浅色那个 #98a2b3 在白底上只有
+    # 2.58:1，本来就不合格。
+    "text": "#f4eeee",
+    "text_muted": "#ab9fa1",
+    "text_faint": "#7d7274",
+    # 品牌与语义。深色里红是强调色，它压在画布上是 4.94:1。
+    "accent": "#e5484d",
+    "accent_hover": "#f26064",
+    "accent_soft": "#241014",
+    "on_accent": "#1a0d0e",
+    "danger": "#ff9a94",
+    "danger_soft": "#3f1c1f",
+    "spend_warn": "#e8a33d",
+    "severity_empty_fg": "#8a7f80",
+    # 按钮
+    "button_secondary_bg": "#2a2023",
+    "button_secondary_hover": "#352a2d",
+    "button_danger_hover": "#4a2226",
+    "button_disabled_bg": "#2b2326",
+    # 日志面板。浅色下它是压在浅色页面上的黑板，是「往里看的窗口」；深色下没有
+    # 任何东西比黑画布更黑，于是把它做成凹陷：底色比画布还深一点，靠 1.78:1 的
+    # 边框把它从画布上划出来。
+    "log_bg": "#080506",
+    "log_border": "#463538",
+    "log_head_bg": "#100b0c",
+    "log_head_fg": "#e6dede",
+    "log_hint_fg": "#8d8285",
+    "log_text_bg": "#080506",
+    "log_text_fg": "#c9c0c0",
+    "log_caret": "#e5484d",
+    "log_select_bg": "#3f3134",
+    "log_select_fg": "#ffffff",
+    "verdict": {
+        "检测到可直接定性的掉包证据": ("#ffb3ad", "#4a1b20"),
+        "检测到高风险问题": ("#ffb3ad", "#4a1b20"),
+        "检测到中等问题": ("#ffd6a0", "#432d12"),
+        "仅检测到轻微问题": ("#efe291", "#3d351a"),
+        "未检测到问题": ("#8fe4b1", "#153424"),
+    },
+    "verdict_fallback": ("#d0c7c8", "#2a2023"),
+    "fail": ("#ffb3ad", "#4a1b20"),
+    #: **和浅色一个字都不差。** 见文件头第 1 条规则：这是压在页面上的白字色块，
+    #: 不是画在页面上的元素。
+    "severity_fill": {
+        "critical": ("#b91c1c", "#ffffff"),
+        "high": ("#c2410c", "#ffffff"),
+        "medium": ("#a16207", "#ffffff"),
+        "low": ("#4d7c0f", "#ffffff"),
+        "info": ("#475569", "#ffffff"),
+        "clean": ("#15803d", "#ffffff"),
+    },
+    # 厂商色（15 个）全部重取。浅色那套是给白底挑的，搬到深色画布上会发糊 ——
+    # 最亮的几个直接变成灰。重取之后最差的 cohere 也有 6.52:1。
+    "family": {
+        "openai": "#2dd4bf",
+        "anthropic": "#c084fc",
+        "deepseek": "#7aa2ff",
+        "google": "#f0b429",
+        "meta": "#4cc3f0",
+        "mistral": "#fb923c",
+        "minimax": "#fb7185",
+        "qwen": "#a3e635",
+        "zhipu": "#e879f9",
+        "moonshot": "#22d3ee",
+        "xai": "#9aa4b2",
+        "cohere": "#a78bfa",
+        "amazon": "#e0b24c",
+        "microsoft": "#7ea6ff",
+        "nvidia": "#4ade80",
+    },
+    "family_fallback": ("#2dd4bf", "#7aa2ff", "#fb7185", "#f0b429", "#c084fc", "#22d3ee"),
+}
+
+THEMES: dict[str, dict[str, Any]] = {"light": LIGHT, "dark": DARK}
 
 #: 当前生效的调色板。tkinter 是在构造控件时读颜色的，所以换主题只能是「换掉这个
 #: 引用 + 重建控件树」；任何跨重建缓存了颜色值的地方都会渲染成旧主题。
 PALETTE: dict[str, Any] = LIGHT
+
+
+def _missing_roles(theme: dict[str, Any]) -> list[str]:
+    return [role for role in _CHROME_ROLES if role not in theme]
+
+
+for _name, _theme in THEMES.items():
+    if _missing_roles(_theme):
+        raise RuntimeError(f"主题 {_name!r} 缺少角色: {_missing_roles(_theme)}")
+del _name, _theme
 
 
 def verdict_style(verdict: str) -> tuple[str, str, str]:
@@ -536,7 +643,7 @@ class ExactProgress(tk.Frame):
         )
         self._maximum = 1.0
         self._value = 0.0
-        self._fill = tk.Frame(self, background=PALETTE["accent"], bd=0)
+        self._fill = tk.Frame(self, background=PALETTE["progress_fill"], bd=0)
         self.pack_propagate(False)
 
     def _redraw(self) -> None:
@@ -666,9 +773,9 @@ class RelayCheckApp:
         style.configure(
             "Relay.Horizontal.TProgressbar",
             troughcolor=PALETTE["track"],
-            background=PALETTE["accent"],
-            lightcolor=PALETTE["accent"],
-            darkcolor=PALETTE["accent"],
+            background=PALETTE["progress_fill"],
+            lightcolor=PALETTE["progress_fill"],
+            darkcolor=PALETTE["progress_fill"],
             bordercolor=PALETTE["border"],
         )
         style.configure(

@@ -4,6 +4,7 @@ Usage::
 
     python gui/preview_ui.py clean
     python gui/preview_ui.py problem
+    python gui/preview_ui.py problem --theme dark
 
 This is a design harness, not a second reporting implementation.  It only feeds
 representative, static data into ``RelayCheckApp``'s existing rendering methods;
@@ -76,7 +77,10 @@ def _fill_log(app: G.RelayCheckApp) -> None:
         app._log(line)
 
 
-def show(state: str) -> None:
+def show(state: str, theme: str = "light") -> None:
+    # 换主题就是换掉这一张表。控件是在构造时读颜色的，所以必须在建窗口之前设；
+    # 这也正是 app 之后切换主题要重建控件树的原因。
+    G.PALETTE = G.THEMES[theme]
     root = tk.Tk()
     app = G.RelayCheckApp(root)
     app.url_var.set("https://api.example.com/v1")
@@ -141,8 +145,14 @@ def main() -> None:
         default="clean",
         choices=("initial", "advanced", "running", "clean", "problem", "failure"),
     )
+    parser.add_argument(
+        "--theme",
+        default="light",
+        choices=tuple(G.THEMES),
+        help="用哪套调色板渲染（默认 light）",
+    )
     args = parser.parse_args()
-    show(args.state)
+    show(args.state, args.theme)
 
 
 if __name__ == "__main__":

@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import inspect
 import io
+import re
 import sys
 from pathlib import Path
 
@@ -709,6 +710,68 @@ def test_a_vendors_colour_is_the_same_on_every_run() -> None:
     spread = {G.family_color(f"vendor-{i}") for i in range(12)}
     assert len(spread) > 1, "未知厂商全都撞到同一个颜色"
     assert all(colour in G.PALETTE["family_fallback"] for colour in spread)
+
+
+def _contrast(a: str, b: str) -> float:
+    """WCAG relative-luminance ratio.
+
+    A local copy on purpose: the tests must not reach for the contrast scripts that
+    live outside the repo, or CI would depend on my scratch directory.
+    """
+
+    def _lum(colour: str) -> float:
+        channels = [int(colour[i : i + 2], 16) / 255 for i in (1, 3, 5)]
+        linear = [
+            c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+            for c in channels
+        ]
+        return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+    hi, lo = sorted((_lum(a), _lum(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def test_every_theme_answers_every_role_the_window_asks_for() -> None:
+    """A theme that is missing a role used to fail three frames deep inside a widget
+    constructor, where the traceback names a tkinter option and never the colour.
+
+    ``relaycheck_gui`` now refuses to import a short theme at all. This pins the
+    shape from the outside so a half-filled third theme cannot be added quietly.
+    """
+    if not _need_gui():
+        return
+    light = G.THEMES["light"]
+    for name, theme in G.THEMES.items():
+        missing = [role for role in G._CHROME_ROLES if role not in theme]
+        assert not missing, f"{name} 少了角色: {missing}"
+        assert set(theme) == set(light), (
+            f"{name} 的 key 跟 light 对不上: "
+            f"多 {sorted(set(theme) - set(light))} 少 {sorted(set(light) - set(theme))}"
+        )
+        for role in G._CHROME_ROLES:
+            value = theme[role]
+            assert re.fullmatch(r"#[0-9a-f]{6}", value), f"{name}.{role} = {value!r}"
+
+
+def test_the_progress_bar_is_not_painted_in_a_semantic_colour() -> None:
+    """The bar only ever means "still running".
+
+    Borrow a semantic colour and a perfectly healthy run reads as a failure — which
+    is exactly what a red bar under 正在检测… says to the user. So the fill gets its
+    own role, and it has to be both off the semantic palette and clearly visible
+    against the slot it fills.
+    """
+    if not _need_gui():
+        return
+    for name, theme in G.THEMES.items():
+        fill = theme["progress_fill"]
+        semantic = {theme["danger"], theme["danger_soft"], theme["spend_warn"]}
+        semantic |= {bg for bg, _fg in theme["severity_fill"].values()}
+        assert fill not in semantic, f"{name}: 进度条用了语义色 {fill}"
+        claimed = _contrast(fill, theme["track"])
+        assert claimed >= 4.5, (
+            f"{name}: 进度条对进度槽只有 {claimed:.2f}:1，看不出来在动"
+        )
 
 
 def test_window_builds_with_the_expected_initial_state() -> None:
