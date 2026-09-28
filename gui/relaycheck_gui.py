@@ -74,7 +74,10 @@ APP_TITLE = "relaycheck 桌面版"
 #: 每个主题都必须提供的角色。少了哪一个，测试会立刻说出来。
 _CHROME_ROLES = (
     "app_bg", "surface", "surface_subtle", "text", "text_muted", "text_faint",
-    "border", "border_soft", "accent", "accent_hover", "accent_soft", "on_accent",
+    "border", "border_soft", "accent", "accent_soft",
+    #: 主按钮的三件套。它跟 accent 拆开，因为强调色要能压在浅粉胶囊上当字读，
+    #: 而按钮只要自己的前后景够对比 —— 一个值要同时满足两件事，两边都会被卡死。
+    "button_primary_bg", "button_primary_hover", "button_primary_fg",
     "danger", "danger_soft", "button_secondary_bg", "button_secondary_hover",
     "button_danger_hover", "button_disabled_bg", "track", "rule",
     #: 进度条的填充。它是唯一一个「只表示在动」的填充色，所以既不能借用任何语义
@@ -141,12 +144,18 @@ LIGHT: dict[str, Any] = {
     "text": "#241d1f",
     "text_muted": "#605759",
     "text_faint": "#736a6d",
-    # 品牌与语义。品牌是粉，只出现在图标 / 焦点环 / 主按钮 / 徽章上；红照样留给
-    # danger，绿照样留给 CLEAN。粉在卡片上 5.87:1、在画布上 5.30:1。
-    "accent": "#c2185b",
-    "accent_hover": "#a3144e",
-    "accent_soft": "#fce4ec",
-    "on_accent": "#ffffff",
+    # 品牌与语义。品牌是粉，只出现在图标 / 焦点环 / 徽章 / 主按钮上；红照样留给
+    # danger，绿照样留给 CLEAN。
+    #: 粉当「字」用（徽章、选中前景、焦点环）时得压在浅粉底上读得出来：卡片 5.14:1、
+    #: 画布 4.65:1、浅粉胶囊 4.58:1。再浅一档就守不住 4.5 了，所以它到底还是偏深
+    #: 的那一档 —— 浅到像少女粉的那种粉，当字读只有两倍出头。
+    "accent": "#c9297a",
+    "accent_soft": "#fdeef3",
+    #: 粉当「底」用（主按钮）时不必管自己跟白底的关系，只要前后景够对比。拆开之
+    #: 后才敢真的浅下去：深梅字压在它上面是 8.31:1。
+    "button_primary_bg": "#ffa8c8",
+    "button_primary_hover": "#ff96bc",
+    "button_primary_fg": "#4a1226",
     "danger": "#b42318",
     "danger_soft": "#fef3f2",
     "spend_warn": "#a1541a",
@@ -238,9 +247,12 @@ DARK: dict[str, Any] = {
     "text_faint": "#7d7274",
     # 品牌与语义。深色里红是强调色，它压在画布上是 4.94:1。
     "accent": "#e5484d",
-    "accent_hover": "#f26064",
     "accent_soft": "#241014",
-    "on_accent": "#1a0d0e",
+    #: 主按钮这里跟 accent 同值 —— 深色下红底本来就够亮，近黑的字一个值就够，
+    #: 不需要像浅色那样拆成两件事。
+    "button_primary_bg": "#e5484d",
+    "button_primary_hover": "#f26064",
+    "button_primary_fg": "#1a0d0e",
     "danger": "#ff9a94",
     "danger_soft": "#3f1c1f",
     "spend_warn": "#e8a33d",
@@ -808,7 +820,10 @@ class RelayCheckApp:
     ) -> tk.Button:
         """Create one flat, keyboard-focusable button with a real visual role."""
         palettes = {
-            "primary": (PALETTE["accent"], PALETTE["on_accent"], PALETTE["accent_hover"]),
+            "primary": (
+                PALETTE["button_primary_bg"], PALETTE["button_primary_fg"],
+                PALETTE["button_primary_hover"],
+            ),
             "secondary": (PALETTE["button_secondary_bg"], PALETTE["text"], PALETTE["button_secondary_hover"]),
             "danger": (PALETTE["danger_soft"], PALETTE["danger"], PALETTE["button_danger_hover"]),
             "ghost": (PALETTE["app_bg"], PALETTE["text_muted"], PALETTE["accent_soft"]),
